@@ -273,6 +273,9 @@ Qed.
 
 Definition ea_in_range (ea : int) : Prop :=  Int.lt ea (MyHex "FFFFFFFF") = true. 
 
+Definition ea_in_os_range (ea : int) : Prop :=  (Int.le  (MyHex "40000000") ea  && Int.le ea (MyHex "4000FFFF") ) = true. 
+
+
 Definition access_granted (cxt : CPUContext) (tlbeo : tlbe_option) : Prop := grant_access2 cxt tlbeo = true.
 
 Definition tlb_hit  (tlbeo : tlbe_option) : Prop := tlbeo <> None.
@@ -284,9 +287,21 @@ Definition  find_tlbe_none_empty (cxt : CPUContext) (ea : int) (b : TLB) : Prop 
 
 Lemma os_access_tlbe_always_hit :
              forall (ea : int), 
-             ea_in_range ea ->  find_tlbe_none_empty CPUContextOS ea TLB1.
+             ea_in_os_range ea ->  find_tlbe_none_empty CPUContextOS ea TLB1.
 Proof.
+intros ea H H'.
 
+
+unfold find_tlbe in H'.
+simpl in H'.
+simpl in H.
+unfold ea_in_os_range in H.
+unfold get_pn_from_epn in H'.
+unfold get_pn_from_ea in H'.
+
+destruct ea.
+destruct H'.
+destruct H.
 
 
 (* To be done *)
@@ -303,20 +318,6 @@ Lemma os_access_ok :
            -> addr_tranlate_ok tlbe ea  ) .
 
 
-Proof.
-intros ea.
-intro.
-intros.
-generalize ea.
-generalize H.
-generalize ea.
-intuition.
-generalize H.
 
 (* To be done *)
-
- 
-
-
-
 
