@@ -11,22 +11,13 @@
 (* *********************************************************************)
 
 
-Require Import Integers. (* Definition of int,  from Compcert   *)
 Require Import BinNums. (* Definition of Z, from Coq   *)
 Require Import String. (* Definition of string, from Coq  *)
 Require Import HexString. (* Defition of HexString, from 8.9 Coq   *)
 Require Import ZArith. (* omega tactic *)
 
-Require Import  Maps.
-
-Inductive flatmem_val :=
-  | HUndef
-  | HByte: byte -> flatmem_val.
-
-Definition flatmem := ZMap.t flatmem_val. 
-
-(** empty flatmem*)
-Definition empty_flatmem : flatmem := ZMap.init HUndef.
+Add LoadPath "lib_from_compcert".
+Require Import Integers. (* Definition of int,  from Compcert   *)
 
 
 Definition MyHex (s: string) : int :=
@@ -273,7 +264,7 @@ Qed.
 
 Definition ea_in_range (ea : int) : Prop :=  Int.lt ea (MyHex "FFFFFFFF") = true. 
 
-Definition ea_in_os_range (ea : int) : Prop :=  (Int.le  (MyHex "40000000") ea  && Int.le ea (MyHex "4000FFFF") ) = true. 
+Definition ea_in_os_range (ea : int) : Prop :=  (Int.lt  (MyHex "3fffffff") ea  && Int.lt ea (MyHex "40010000") ) = true. 
 
 
 Definition access_granted (cxt : CPUContext) (tlbeo : tlbe_option) : Prop := grant_access2 cxt tlbeo = true.
@@ -290,22 +281,22 @@ Lemma os_access_tlbe_always_hit :
              ea_in_os_range ea ->  find_tlbe_none_empty CPUContextOS ea TLB1.
 Proof.
 intros ea H H'.
-
-
-unfold find_tlbe in H'.
 simpl in H'.
 simpl in H.
 unfold ea_in_os_range in H.
 unfold get_pn_from_epn in H'.
 unfold get_pn_from_ea in H'.
+simpl in H'.
+unfold MyHex in H.
 
-destruct ea.
-destruct H'.
-destruct H.
+change (Int.eq (Int.repr 255) (Int.repr 255)) with true in H'. simpl in H'.
+change (Int.shru (Int.repr 1048576) (Int.repr 6)) with (Int.repr 16384) in H'. simpl in H'.
+
+assert (Int.lt (Int.repr (to_Z "3fffffff")) ea && Int.lt ea (Int.repr (to_Z "40010000")) = true -> Int.eq (Int.repr 16384) (Int.and (Int.shru ea (Int.repr 16)) (Int.repr 65535)) = true ).
 
 
 (* To be done *)
-Admitted.
+Abort.
 
 (* Goal: For any 32 bits effective address, if the tlb search indicate that there is valid tlb entry,then access is granted, and  the translated address is the same as the original one  *)
 
@@ -318,6 +309,8 @@ Lemma os_access_ok :
            -> addr_tranlate_ok tlbe ea  ) .
 
 
-
+Proof.
 (* To be done *)
+Abort.
+
 
