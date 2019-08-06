@@ -15,11 +15,9 @@
 
 (** Formalizations of machine integers modulo $2^N$ #2<sup>N</sup>#. *)
 
-Require Import Eqdep_dec.
-Require Import Zquot.
-Require Import Zwf.
-Add LoadPath "lib".
-Require Import Coqlib.
+Require Import Eqdep_dec Zquot Zwf.
+Require Import Coqlib Zbits.
+Require Archi.
 
 (** * Comparisons *)
 
@@ -54,7 +52,7 @@ Definition swap_comparison (c: comparison): comparison :=
 (** * Parameterization by the word size, in bits. *)
 
 Module Type WORDSIZE.
-  Variable wordsize: nat.
+  Parameter wordsize: nat.
   Axiom wordsize_not_zero: wordsize <> 0%nat.
 End WORDSIZE.
 
@@ -65,7 +63,7 @@ Local Unset Case Analysis Schemes.
 Module Make(WS: WORDSIZE).
 
 Definition wordsize: nat := WS.wordsize.
-Definition zwordsize: Z := Z_of_nat wordsize.
+Definition zwordsize: Z := Z.of_nat wordsize.
 Definition modulus : Z := two_power_nat wordsize.
 Definition half_modulus : Z := modulus / 2.
 Definition max_unsigned : Z := modulus - 1.
@@ -82,10 +80,18 @@ Proof.
   unfold modulus. apply two_power_nat_two_p.
 Qed.
 
+Remark modulus_gt_one: modulus > 1.
+Proof.
+  rewrite modulus_power. apply Z.lt_gt. apply (two_p_monotone_strict 0).
+  generalize wordsize_pos; omega.
+Qed.
+
 Remark modulus_pos: modulus > 0.
 Proof.
-  rewrite modulus_power. apply two_p_gt_ZERO. generalize wordsize_pos; omega.
+  generalize modulus_gt_one; omega.
 Qed.
+
+Hint Resolve modulus_pos: ints.
 
 (** * Representation of machine integers *)
 
@@ -97,17 +103,6 @@ Record int: Type := mkint { intval: Z; intrange: -1 < intval < modulus }.
 
 (** Fast normalization modulo [2^wordsize] *)
 
-Fixpoint P_mod_two_p (p: positive) (n: nat) {struct n} : Z :=
-  match n with
-  | O => 0
-  | S m =>
-      match p with
-      | xH => 1
-      | xO q => Z.double (P_mod_two_p q m)
-      | xI q => Z.succ_double (P_mod_two_p q m)
-      end
-  end.
-
 Definition Z_mod_modulus (x: Z) : Z :=
   match x with
   | Z0 => 0
@@ -115,76 +110,19 @@ Definition Z_mod_modulus (x: Z) : Z :=
   | Zneg p => let r := P_mod_two_p p wordsize in if zeq r 0 then 0 else modulus - r
   end.
 
-Lemma P_mod_two_p_range:
-  forall n p, 0 <= P_mod_two_p p n < two_power_nat n.
-Proof.
-  induction n; simpl; intros.
-  - rewrite two_power_nat_O. omega.
-  - rewrite two_power_nat_S. destruct p.
-    + generalize (IHn p). rewrite Z.succ_double_spec. omega.
-    + generalize (IHn p). rewrite Z.double_spec. omega.
-    + generalize (two_power_nat_pos n). omega.
-Qed.
-
-Lemma P_mod_two_p_eq:
-  forall n p, P_mod_two_p p n = (Zpos p) mod (two_power_nat n).
-Proof.
-  assert (forall n p, exists y, Zpos p = y * two_power_nat n + P_mod_two_p p n).
-  {
-    induction n; simpl; intros.
-    - rewrite two_power_nat_O. exists (Zpos p). ring.
-    - rewrite two_power_nat_S. destruct p.
-      + destruct (IHn p) as [y EQ]. exists y.
-        change (Zpos p~1) with (2 * Zpos p + 1). rewrite EQ.
-        rewrite Z.succ_double_spec. ring.
-      + destruct (IHn p) as [y EQ]. exists y.
-        change (Zpos p~0) with (2 * Zpos p). rewrite EQ.
-        rewrite (Z.double_spec (P_mod_two_p p n)). ring.
-      + exists 0; omega.
-  }
-  intros.
-  destruct (H n p) as [y EQ].
-  symmetry. apply Zmod_unique with y. auto. apply P_mod_two_p_range.
-Qed.
-
 Lemma Z_mod_modulus_range:
   forall x, 0 <= Z_mod_modulus x < modulus.
-Proof.
-  intros; unfold Z_mod_modulus.
-  destruct x.
-  - generalize modulus_pos; omega.
-  - apply P_mod_two_p_range.
-  - set (r := P_mod_two_p p wordsize).
-    assert (0 <= r < modulus) by apply P_mod_two_p_range.
-    destruct (zeq r 0).
-    + generalize modulus_pos; omega.
-    + omega.
-Qed.
+Proof (Z_mod_two_p_range wordsize).
 
 Lemma Z_mod_modulus_range':
   forall x, -1 < Z_mod_modulus x < modulus.
 Proof.
-  intros. generalize (Z_mod_modulus_range x); omega.
+  intros. generalize (Z_mod_modulus_range x); intuition.
 Qed.
 
 Lemma Z_mod_modulus_eq:
   forall x, Z_mod_modulus x = x mod modulus.
-Proof.
-  intros. unfold Z_mod_modulus. destruct x.
-  - rewrite Zmod_0_l. auto.
-  - apply P_mod_two_p_eq.
-  - generalize (P_mod_two_p_range wordsize p) (P_mod_two_p_eq wordsize p).
-    fold modulus. intros A B.
-    exploit (Z_div_mod_eq (Zpos p) modulus). apply modulus_pos. intros C.
-    set (q := Zpos p / modulus) in *.
-    set (r := P_mod_two_p p wordsize) in *.
-    rewrite <- B in C.
-    change (Z.neg p) with (- (Z.pos p)). destruct (zeq r 0).
-    + symmetry. apply Zmod_unique with (-q). rewrite C; rewrite e. ring.
-      generalize modulus_pos; omega.
-    + symmetry. apply Zmod_unique with (-q - 1). rewrite C. ring.
-      omega.
-Qed.
+Proof (Z_mod_two_p_eq wordsize).
 
 (** The [unsigned] and [signed] functions return the Coq integer corresponding
   to the given machine integer, interpreted as unsigned or signed
@@ -213,7 +151,7 @@ Proof.
   intros. subst y.
   assert (forall (n m: Z) (P1 P2: n < m), P1 = P2).
   {
-    unfold Zlt; intros.
+    unfold Z.lt; intros.
     apply eq_proofs_unicity.
     intros c1 c2. destruct c1; destruct c2; (left; reflexivity) || (right; congruence).
   }
@@ -319,53 +257,10 @@ Definition shr_carry (x y: int) : int :=
 
 (** Zero and sign extensions *)
 
-Definition Zshiftin (b: bool) (x: Z) : Z :=
-  if b then Z.succ_double x else Z.double x.
-
-(** In pseudo-code:
-<<
-    Fixpoint Zzero_ext (n: Z) (x: Z) : Z :=
-      if zle n 0 then
-        0
-      else
-        Zshiftin (Z.odd x) (Zzero_ext (Z.pred n) (Z.div2 x)).
-    Fixpoint Zsign_ext (n: Z) (x: Z) : Z :=
-      if zle n 1 then
-        if Z.odd x then -1 else 0
-      else
-        Zshiftin (Z.odd x) (Zzero_ext (Z.pred n) (Z.div2 x)).
->>
-  We encode this [nat]-like recursion using the [Z.iter] iteration
-  function, in order to make the [Zzero_ext] and [Zsign_ext]
-  functions efficiently executable within Coq.
-*)
-
-Definition Zzero_ext (n: Z) (x: Z) : Z :=
-  Z.iter n
-    (fun rec x => Zshiftin (Z.odd x) (rec (Z.div2 x)))
-    (fun x => 0)
-    x.
-
-Definition Zsign_ext (n: Z) (x: Z) : Z :=
-  Z.iter (Z.pred n)
-    (fun rec x => Zshiftin (Z.odd x) (rec (Z.div2 x)))
-    (fun x => if Z.odd x then -1 else 0)
-    x.
-
 Definition zero_ext (n: Z) (x: int) : int := repr (Zzero_ext n (unsigned x)).
-
 Definition sign_ext (n: Z) (x: int) : int := repr (Zsign_ext n (unsigned x)).
 
 (** Decomposition of a number as a sum of powers of two. *)
-
-Fixpoint Z_one_bits (n: nat) (x: Z) (i: Z) {struct n}: list Z :=
-  match n with
-  | O => nil
-  | S m =>
-      if Z.odd x
-      then i :: Z_one_bits m (Z.div2 x) (i+1)
-      else Z_one_bits m (Z.div2 x) (i+1)
-  end.
 
 Definition one_bits (x: int) : list int :=
   List.map repr (Z_one_bits wordsize (unsigned x) 0).
@@ -373,9 +268,9 @@ Definition one_bits (x: int) : list int :=
 (** Recognition of powers of two. *)
 
 Definition is_power2 (x: int) : option int :=
-  match Z_one_bits wordsize (unsigned x) 0 with
-  | i :: nil => Some (repr i)
-  | _ => None
+  match Z_is_power2 (unsigned x) with
+  | Some i => Some (repr i)
+  | None => None
   end.
 
 (** Comparisons. *)
@@ -404,6 +299,18 @@ Definition is_false (x: int) : Prop := x = zero.
 Definition is_true  (x: int) : Prop := x <> zero.
 Definition notbool  (x: int) : int  := if eq x zero then one else zero.
 
+(** x86-style extended division and modulus *)
+
+Definition divmodu2 (nhi nlo: int) (d: int) : option (int * int) :=
+  if eq_dec d zero then None else
+   (let (q, r) := Z.div_eucl (unsigned nhi * modulus + unsigned nlo) (unsigned d) in
+    if zle q max_unsigned then Some(repr q, repr r) else None).
+
+Definition divmods2 (nhi nlo: int) (d: int) : option (int * int) :=
+  if eq_dec d zero then None else
+   (let (q, r) := Z.quotrem (signed nhi * modulus + unsigned nlo) (signed d) in
+    if zle min_signed q && zle q max_signed then Some(repr q, repr r) else None).
+
 (** * Properties of integers and integer arithmetic *)
 
 (** ** Properties of [modulus], [max_unsigned], etc. *)
@@ -413,8 +320,8 @@ Remark half_modulus_power:
 Proof.
   unfold half_modulus. rewrite modulus_power.
   set (ws1 := zwordsize - 1).
-  replace (zwordsize) with (Zsucc ws1).
-  rewrite two_p_S. rewrite Zmult_comm. apply Z_div_mult. omega.
+  replace (zwordsize) with (Z.succ ws1).
+  rewrite two_p_S. rewrite Z.mul_comm. apply Z_div_mult. omega.
   unfold ws1. generalize wordsize_pos; omega.
   unfold ws1. omega.
 Qed.
@@ -474,114 +381,20 @@ Proof.
 Qed.
 
 Lemma unsigned_repr_eq:
-  forall x, unsigned (repr x) = Zmod x modulus.
+  forall x, unsigned (repr x) = Z.modulo x modulus.
 Proof.
   intros. simpl. apply Z_mod_modulus_eq.
 Qed.
 
 Lemma signed_repr_eq:
-  forall x, signed (repr x) = if zlt (Zmod x modulus) half_modulus then Zmod x modulus else Zmod x modulus - modulus.
+  forall x, signed (repr x) = if zlt (Z.modulo x modulus) half_modulus then Z.modulo x modulus else Z.modulo x modulus - modulus.
 Proof.
   intros. unfold signed. rewrite unsigned_repr_eq. auto.
 Qed.
 
 (** ** Modulo arithmetic *)
 
-(** We define and state properties of equality and arithmetic modulo a
-  positive integer. *)
-
-Section EQ_MODULO.
-
-Variable modul: Z.
-Hypothesis modul_pos: modul > 0.
-
-Definition eqmod (x y: Z) : Prop := exists k, x = k * modul + y.
-
-Lemma eqmod_refl: forall x, eqmod x x.
-Proof.
-  intros; red. exists 0. omega.
-Qed.
-
-Lemma eqmod_refl2: forall x y, x = y -> eqmod x y.
-Proof.
-  intros. subst y. apply eqmod_refl.
-Qed.
-
-Lemma eqmod_sym: forall x y, eqmod x y -> eqmod y x.
-Proof.
-  intros x y [k EQ]; red. exists (-k). subst x. ring.
-Qed.
-
-Lemma eqmod_trans: forall x y z, eqmod x y -> eqmod y z -> eqmod x z.
-Proof.
-  intros x y z [k1 EQ1] [k2 EQ2]; red.
-  exists (k1 + k2). subst x; subst y. ring.
-Qed.
-
-Lemma eqmod_small_eq:
-  forall x y, eqmod x y -> 0 <= x < modul -> 0 <= y < modul -> x = y.
-Proof.
-  intros x y [k EQ] I1 I2.
-  generalize (Zdiv_unique _ _ _ _ EQ I2). intro.
-  rewrite (Zdiv_small x modul I1) in H. subst k. omega.
-Qed.
-
-Lemma eqmod_mod_eq:
-  forall x y, eqmod x y -> x mod modul = y mod modul.
-Proof.
-  intros x y [k EQ]. subst x.
-  rewrite Zplus_comm. apply Z_mod_plus. auto.
-Qed.
-
-Lemma eqmod_mod:
-  forall x, eqmod x (x mod modul).
-Proof.
-  intros; red. exists (x / modul).
-  rewrite Zmult_comm. apply Z_div_mod_eq. auto.
-Qed.
-
-Lemma eqmod_add:
-  forall a b c d, eqmod a b -> eqmod c d -> eqmod (a + c) (b + d).
-Proof.
-  intros a b c d [k1 EQ1] [k2 EQ2]; red.
-  subst a; subst c. exists (k1 + k2). ring.
-Qed.
-
-Lemma eqmod_neg:
-  forall x y, eqmod x y -> eqmod (-x) (-y).
-Proof.
-  intros x y [k EQ]; red. exists (-k). rewrite EQ. ring.
-Qed.
-
-Lemma eqmod_sub:
-  forall a b c d, eqmod a b -> eqmod c d -> eqmod (a - c) (b - d).
-Proof.
-  intros a b c d [k1 EQ1] [k2 EQ2]; red.
-  subst a; subst c. exists (k1 - k2). ring.
-Qed.
-
-Lemma eqmod_mult:
-  forall a b c d, eqmod a c -> eqmod b d -> eqmod (a * b) (c * d).
-Proof.
-  intros a b c d [k1 EQ1] [k2 EQ2]; red.
-  subst a; subst b.
-  exists (k1 * k2 * modul + c * k2 + k1 * d).
-  ring.
-Qed.
-
-End EQ_MODULO.
-
-Lemma eqmod_divides:
-  forall n m x y, eqmod n x y -> Zdivide m n -> eqmod m x y.
-Proof.
-  intros. destruct H as [k1 EQ1]. destruct H0 as [k2 EQ2].
-  exists (k1*k2). rewrite <- Zmult_assoc. rewrite <- EQ2. auto.
-Qed.
-
-(** We then specialize these definitions to equality modulo
-  $2^{wordsize}$ #2<sup>wordsize</sup>#. *)
-
-Hint Resolve modulus_pos: ints.
+(** [eqm] is equality modulo $2^{wordsize}$ #2<sup>wordsize</sup>#. *)
 
 Definition eqm := eqmod modulus.
 
@@ -626,6 +439,19 @@ Lemma eqm_mult:
   forall a b c d, eqm a c -> eqm b d -> eqm (a * b) (c * d).
 Proof (eqmod_mult modulus).
 Hint Resolve eqm_mult: ints.
+
+Lemma eqm_same_bits:
+  forall x y,
+  (forall i, 0 <= i < zwordsize -> Z.testbit x i = Z.testbit y i) ->
+  eqm x y.
+Proof (eqmod_same_bits wordsize).
+
+Lemma same_bits_eqm:
+  forall x y i,
+  eqm x y ->
+  0 <= i < zwordsize ->
+  Z.testbit x i = Z.testbit y i.
+Proof (same_bits_eqmod wordsize).
 
 (** ** Properties of the coercions between [Z] and [int] *)
 
@@ -696,7 +522,7 @@ Theorem repr_unsigned:
   forall i, repr (unsigned i) = i.
 Proof.
   destruct i; simpl. unfold repr. apply mkint_eq.
-  rewrite Z_mod_modulus_eq. apply Zmod_small; omega.
+  rewrite Z_mod_modulus_eq. apply Z.mod_small; omega.
 Qed.
 Hint Resolve repr_unsigned: ints.
 
@@ -719,7 +545,7 @@ Theorem unsigned_repr:
   forall z, 0 <= z <= max_unsigned -> unsigned (repr z) = z.
 Proof.
   intros. rewrite unsigned_repr_eq.
-  apply Zmod_small. unfold max_unsigned in H. omega.
+  apply Z.mod_small. unfold max_unsigned in H. omega.
 Qed.
 Hint Resolve unsigned_repr: ints.
 
@@ -766,9 +592,9 @@ Qed.
 
 Theorem unsigned_one: unsigned one = 1.
 Proof.
-  unfold one; rewrite unsigned_repr_eq. apply Zmod_small. split. omega.
-  unfold modulus. replace wordsize with (S(pred wordsize)).
-  rewrite two_power_nat_S. generalize (two_power_nat_pos (pred wordsize)).
+  unfold one; rewrite unsigned_repr_eq. apply Z.mod_small. split. omega.
+  unfold modulus. replace wordsize with (S(Init.Nat.pred wordsize)).
+  rewrite two_power_nat_S. generalize (two_power_nat_pos (Init.Nat.pred wordsize)).
   omega.
   generalize wordsize_pos. unfold zwordsize. omega.
 Qed.
@@ -777,13 +603,19 @@ Theorem unsigned_mone: unsigned mone = modulus - 1.
 Proof.
   unfold mone; rewrite unsigned_repr_eq.
   replace (-1) with ((modulus - 1) + (-1) * modulus).
-  rewrite Z_mod_plus_full. apply Zmod_small.
+  rewrite Z_mod_plus_full. apply Z.mod_small.
   generalize modulus_pos. omega. omega.
 Qed.
 
 Theorem signed_zero: signed zero = 0.
 Proof.
   unfold signed. rewrite unsigned_zero. apply zlt_true. generalize half_modulus_pos; omega.
+Qed.
+
+Theorem signed_one: zwordsize > 1 -> signed one = 1.
+Proof.
+  intros. unfold signed. rewrite unsigned_one. apply zlt_true. 
+  change 1 with (two_p 0). rewrite half_modulus_power. apply two_p_monotone_strict. omega. 
 Qed.
 
 Theorem signed_mone: signed mone = -1.
@@ -803,7 +635,7 @@ Qed.
 Theorem unsigned_repr_wordsize:
   unsigned iwordsize = zwordsize.
 Proof.
-  unfold iwordsize; rewrite unsigned_repr_eq. apply Zmod_small.
+  unfold iwordsize; rewrite unsigned_repr_eq. apply Z.mod_small.
   generalize wordsize_pos wordsize_max_unsigned; unfold max_unsigned; omega.
 Qed.
 
@@ -863,7 +695,7 @@ Proof. intros; unfold add. decEq. omega. Qed.
 Theorem add_zero: forall x, add x zero = x.
 Proof.
   intros. unfold add. rewrite unsigned_zero.
-  rewrite Zplus_0_r. apply repr_unsigned.
+  rewrite Z.add_0_r. apply repr_unsigned.
 Qed.
 
 Theorem add_zero_l: forall x, add zero x = x.
@@ -880,7 +712,7 @@ Proof.
   apply eqm_samerepr.
   apply eqm_trans with ((x' + y') + z').
   auto with ints.
-  rewrite <- Zplus_assoc. auto with ints.
+  rewrite <- Z.add_assoc. auto with ints.
 Qed.
 
 Theorem add_permut: forall x y z, add x (add y z) = add y (add x z).
@@ -900,7 +732,7 @@ Theorem unsigned_add_carry:
   unsigned (add x y) = unsigned x + unsigned y - unsigned (add_carry x y zero) * modulus.
 Proof.
   intros.
-  unfold add, add_carry. rewrite unsigned_zero. rewrite Zplus_0_r.
+  unfold add, add_carry. rewrite unsigned_zero. rewrite Z.add_0_r.
   rewrite unsigned_repr_eq.
   generalize (unsigned_range x) (unsigned_range y). intros.
   destruct (zlt (unsigned x + unsigned y) modulus).
@@ -914,7 +746,7 @@ Corollary unsigned_add_either:
   \/ unsigned (add x y) = unsigned x + unsigned y - modulus.
 Proof.
   intros. rewrite unsigned_add_carry. unfold add_carry.
-  rewrite unsigned_zero. rewrite Zplus_0_r.
+  rewrite unsigned_zero. rewrite Z.add_0_r.
   destruct (zlt (unsigned x + unsigned y) modulus).
   rewrite unsigned_zero. left; omega.
   rewrite unsigned_one. right; omega.
@@ -1009,7 +841,7 @@ Theorem unsigned_sub_borrow:
   unsigned (sub x y) = unsigned x - unsigned y + unsigned (sub_borrow x y zero) * modulus.
 Proof.
   intros.
-  unfold sub, sub_borrow. rewrite unsigned_zero. rewrite Zminus_0_r.
+  unfold sub, sub_borrow. rewrite unsigned_zero. rewrite Z.sub_0_r.
   rewrite unsigned_repr_eq.
   generalize (unsigned_range x) (unsigned_range y). intros.
   destruct (zlt (unsigned x - unsigned y) 0).
@@ -1054,7 +886,7 @@ Proof.
   set (z' := unsigned z).
   apply eqm_samerepr. apply eqm_trans with ((x' * y') * z').
   auto with ints.
-  rewrite <- Zmult_assoc. auto with ints.
+  rewrite <- Z.mul_assoc. auto with ints.
 Qed.
 
 Theorem mul_add_distr_l:
@@ -1114,7 +946,7 @@ Proof.
   apply eqm_samerepr.
   set (x' := unsigned x). set (y' := unsigned y).
   apply eqm_trans with ((x' / y') * y' + x' mod y').
-  apply eqm_refl2. rewrite Zmult_comm. apply Z_div_mod_eq.
+  apply eqm_refl2. rewrite Z.mul_comm. apply Z_div_mod_eq.
   generalize (unsigned_range y); intro.
   assert (unsigned y <> 0). red; intro.
   elim H. rewrite <- (repr_unsigned y). unfold zero. congruence.
@@ -1140,7 +972,7 @@ Proof.
   apply eqm_samerepr.
   set (x' := signed x). set (y' := signed y).
   apply eqm_trans with ((Z.quot x' y') * y' + Z.rem x' y').
-  apply eqm_refl2. rewrite Zmult_comm. apply Z.quot_rem'.
+  apply eqm_refl2. rewrite Z.mul_comm. apply Z.quot_rem'.
   apply eqm_add; auto with ints.
   apply eqm_unsigned_repr_r. apply eqm_mult; auto with ints.
   unfold y'. apply eqm_signed_unsigned.
@@ -1160,6 +992,12 @@ Theorem divu_one:
   forall x, divu x one = x.
 Proof.
   unfold divu; intros. rewrite unsigned_one. rewrite Zdiv_1_r. apply repr_unsigned.
+Qed.
+
+Theorem divs_one:
+  forall x, zwordsize > 1 -> divs x one = x.
+Proof.
+  unfold divs; intros. rewrite signed_one. rewrite Z.quot_1_r. apply repr_signed. auto.
 Qed.
 
 Theorem modu_one:
@@ -1194,299 +1032,87 @@ Proof.
   rewrite <- neg_mul_distr_l. rewrite mul_mone. rewrite neg_involutive. apply sub_idem.
 Qed.
 
-(** ** Bit-level properties *)
-
-(** ** Properties of bit-level operations over [Z] *)
-
-Remark Ztestbit_0: forall n, Z.testbit 0 n = false.
-Proof Z.testbit_0_l.
-
-Remark Ztestbit_1: forall n, Z.testbit 1 n = zeq n 0.
+Theorem divmodu2_divu_modu:
+  forall n d,
+  d <> zero -> divmodu2 zero n d = Some (divu n d, modu n d).
 Proof.
-  intros. destruct n; simpl; auto.
-Qed.
-
-Remark Ztestbit_m1: forall n, 0 <= n -> Z.testbit (-1) n = true.
-Proof.
-  intros. destruct n; simpl; auto.
-Qed.
-
-Remark Zshiftin_spec:
-  forall b x, Zshiftin b x = 2 * x + (if b then 1 else 0).
-Proof.
-  unfold Zshiftin; intros. destruct b.
-  - rewrite Z.succ_double_spec. omega.
-  - rewrite Z.double_spec. omega.
-Qed.
-
-Remark Zshiftin_inj:
-  forall b1 x1 b2 x2,
-  Zshiftin b1 x1 = Zshiftin b2 x2 -> b1 = b2 /\ x1 = x2.
-Proof.
-  intros. rewrite !Zshiftin_spec in H.
-  destruct b1; destruct b2.
-  split; [auto|omega].
-  omegaContradiction.
-  omegaContradiction.
-  split; [auto|omega].
-Qed.
-
-Remark Zdecomp:
-  forall x, x = Zshiftin (Z.odd x) (Z.div2 x).
-Proof.
-  intros. destruct x; simpl.
-  - auto.
-  - destruct p; auto.
-  - destruct p; auto. simpl. rewrite Pos.pred_double_succ. auto.
-Qed.
-
-Remark Ztestbit_shiftin:
-  forall b x n,
-  0 <= n ->
-  Z.testbit (Zshiftin b x) n = if zeq n 0 then b else Z.testbit x (Z.pred n).
-Proof.
-  intros. rewrite Zshiftin_spec. destruct (zeq n 0).
-  - subst n. destruct b.
-    + apply Z.testbit_odd_0.
-    + rewrite Zplus_0_r. apply Z.testbit_even_0.
-  - assert (0 <= Z.pred n) by omega.
-    set (n' := Z.pred n) in *.
-    replace n with (Z.succ n') by (unfold n'; omega).
-    destruct b.
-    + apply Z.testbit_odd_succ; auto.
-    + rewrite Zplus_0_r. apply Z.testbit_even_succ; auto.
-Qed.
-
-Remark Ztestbit_shiftin_base:
-  forall b x, Z.testbit (Zshiftin b x) 0 = b.
-Proof.
-  intros. rewrite Ztestbit_shiftin. apply zeq_true. omega.
-Qed.
-
-Remark Ztestbit_shiftin_succ:
-  forall b x n, 0 <= n -> Z.testbit (Zshiftin b x) (Z.succ n) = Z.testbit x n.
-Proof.
-  intros. rewrite Ztestbit_shiftin. rewrite zeq_false. rewrite Z.pred_succ. auto.
-  omega. omega.
-Qed.
-
-Remark Ztestbit_eq:
-  forall n x, 0 <= n ->
-  Z.testbit x n = if zeq n 0 then Z.odd x else Z.testbit (Z.div2 x) (Z.pred n).
-Proof.
-  intros. rewrite (Zdecomp x) at 1. apply Ztestbit_shiftin; auto.
-Qed.
-
-Remark Ztestbit_base:
-  forall x, Z.testbit x 0 = Z.odd x.
-Proof.
-  intros. rewrite Ztestbit_eq. apply zeq_true. omega.
-Qed.
-
-Remark Ztestbit_succ:
-  forall n x, 0 <= n -> Z.testbit x (Z.succ n) = Z.testbit (Z.div2 x) n.
-Proof.
-  intros. rewrite Ztestbit_eq. rewrite zeq_false. rewrite Z.pred_succ. auto.
-  omega. omega.
-Qed.
-
-Lemma eqmod_same_bits:
-  forall n x y,
-  (forall i, 0 <= i < Z.of_nat n -> Z.testbit x i = Z.testbit y i) ->
-  eqmod (two_power_nat n) x y.
-Proof.
-  induction n; intros.
-  - change (two_power_nat 0) with 1. exists (x-y); ring.
-  - rewrite two_power_nat_S.
-    assert (eqmod (two_power_nat n) (Z.div2 x) (Z.div2 y)).
-      apply IHn. intros. rewrite <- !Ztestbit_succ. apply H. rewrite inj_S; omega.
-      omega. omega.
-  destruct H0 as [k EQ].
-  exists k. rewrite (Zdecomp x). rewrite (Zdecomp y).
-  replace (Z.odd y) with (Z.odd x).
-  rewrite EQ. rewrite !Zshiftin_spec. ring.
-  exploit (H 0). rewrite inj_S; omega.
-  rewrite !Ztestbit_base. auto.
-Qed.
-
-Lemma eqm_same_bits:
-  forall x y,
-  (forall i, 0 <= i < zwordsize -> Z.testbit x i = Z.testbit y i) ->
-  eqm x y.
-Proof (eqmod_same_bits wordsize).
-
-Lemma same_bits_eqmod:
-  forall n x y i,
-  eqmod (two_power_nat n) x y -> 0 <= i < Z.of_nat n ->
-  Z.testbit x i = Z.testbit y i.
-Proof.
-  induction n; intros.
-  - simpl in H0. omegaContradiction.
-  - rewrite inj_S in H0. rewrite two_power_nat_S in H.
-    rewrite !(Ztestbit_eq i); intuition.
-    destruct H as [k EQ].
-    assert (EQ': Zshiftin (Z.odd x) (Z.div2 x) =
-                 Zshiftin (Z.odd y) (k * two_power_nat n + Z.div2 y)).
-    {
-      rewrite (Zdecomp x) in EQ. rewrite (Zdecomp y) in EQ.
-      rewrite EQ. rewrite !Zshiftin_spec. ring.
-    }
-    exploit Zshiftin_inj; eauto. intros [A B].
-    destruct (zeq i 0).
-    + auto.
-    + apply IHn. exists k; auto. omega.
-Qed.
-
-Lemma same_bits_eqm:
-  forall x y i,
-  eqm x y ->
-  0 <= i < zwordsize ->
-  Z.testbit x i = Z.testbit y i.
-Proof (same_bits_eqmod wordsize).
-
-Remark two_power_nat_infinity:
-  forall x, 0 <= x -> exists n, x < two_power_nat n.
-Proof.
-  intros x0 POS0; pattern x0; apply natlike_ind; auto.
-  exists O. compute; auto.
-  intros. destruct H0 as [n LT]. exists (S n). rewrite two_power_nat_S.
-  generalize (two_power_nat_pos n). omega.
-Qed.
-
-Lemma equal_same_bits:
-  forall x y,
-  (forall i, 0 <= i -> Z.testbit x i = Z.testbit y i) ->
-  x = y.
-Proof.
-  intros.
-  set (z := if zlt x y then y - x else x - y).
-  assert (0 <= z).
-    unfold z; destruct (zlt x y); omega.
-  exploit (two_power_nat_infinity z); auto. intros [n LT].
-  assert (eqmod (two_power_nat n) x y).
-    apply eqmod_same_bits. intros. apply H. tauto.
-  assert (eqmod (two_power_nat n) z 0).
-    unfold z. destruct (zlt x y).
-    replace 0 with (y - y) by omega. apply eqmod_sub. apply eqmod_refl. auto.
-    replace 0 with (x - x) by omega. apply eqmod_sub. apply eqmod_refl. apply eqmod_sym; auto.
-  assert (z = 0).
-    apply eqmod_small_eq with (two_power_nat n). auto. omega. generalize (two_power_nat_pos n); omega.
-  unfold z in H3. destruct (zlt x y); omega.
-Qed.
-
-Lemma Z_one_complement:
-  forall i, 0 <= i ->
-  forall x, Z.testbit (-x-1) i = negb (Z.testbit x i).
-Proof.
-  intros i0 POS0. pattern i0. apply Zlt_0_ind; auto.
-  intros i IND POS x.
-  rewrite (Zdecomp x). set (y := Z.div2 x).
-  replace (- Zshiftin (Z.odd x) y - 1)
-     with (Zshiftin (negb (Z.odd x)) (- y - 1)).
-  rewrite !Ztestbit_shiftin; auto.
-  destruct (zeq i 0). auto. apply IND. omega.
-  rewrite !Zshiftin_spec. destruct (Z.odd x); simpl negb; ring.
-Qed.
-
-Lemma Ztestbit_above:
-  forall n x i,
-  0 <= x < two_power_nat n ->
-  i >= Z.of_nat n ->
-  Z.testbit x i = false.
-Proof.
-  induction n; intros.
-  - change (two_power_nat 0) with 1 in H.
-    replace x with 0 by omega.
-    apply Z.testbit_0_l.
-  - rewrite inj_S in H0. rewrite Ztestbit_eq. rewrite zeq_false.
-    apply IHn. rewrite two_power_nat_S in H. rewrite (Zdecomp x) in H.
-    rewrite Zshiftin_spec in H. destruct (Z.odd x); omega.
-    omega. omega. omega.
-Qed.
-
-Lemma Ztestbit_above_neg:
-  forall n x i,
-  -two_power_nat n <= x < 0 ->
-  i >= Z.of_nat n ->
-  Z.testbit x i = true.
-Proof.
-  intros. set (y := -x-1).
-  assert (Z.testbit y i = false).
-    apply Ztestbit_above with n.
-    unfold y; omega. auto.
-  unfold y in H1. rewrite Z_one_complement in H1.
-  change true with (negb false). rewrite <- H1. rewrite negb_involutive; auto.
+  unfold divmodu2, divu, modu; intros.
+  rewrite dec_eq_false by auto.
+  set (N := unsigned zero * modulus + unsigned n).
+  assert (E1: unsigned n = N) by (unfold N; rewrite unsigned_zero; ring). rewrite ! E1.
+  set (D := unsigned d).
+  set (Q := N / D); set (R := N mod D).
+  assert (E2: Z.div_eucl N D = (Q, R)).
+  { unfold Q, R, Z.div, Z.modulo. destruct (Z.div_eucl N D); auto. }
+  rewrite E2. rewrite zle_true. auto.
+  assert (unsigned d <> 0).
+  { red; intros. elim H. rewrite <- (repr_unsigned d). rewrite H0; auto. }
+  assert (0 < D).
+  { unfold D. generalize (unsigned_range d); intros. omega. }
+  assert (0 <= Q <= max_unsigned).
+  { unfold Q. apply Zdiv_interval_2.
+    rewrite <- E1; apply unsigned_range_2.
+    omega. unfold max_unsigned; generalize modulus_pos; omega. omega. }
   omega.
 Qed.
 
-Lemma Zsign_bit:
-  forall n x,
-  0 <= x < two_power_nat (S n) ->
-  Z.testbit x (Z_of_nat n) = if zlt x (two_power_nat n) then false else true.
+Lemma unsigned_signed:
+  forall n, unsigned n = if lt n zero then signed n + modulus else signed n.
 Proof.
-  induction n; intros.
-  - change (two_power_nat 1) with 2 in H.
-    assert (x = 0 \/ x = 1) by omega.
-    destruct H0; subst x; reflexivity.
-  - rewrite inj_S. rewrite Ztestbit_eq. rewrite zeq_false. rewrite Z.pred_succ.
-    rewrite IHn. rewrite two_power_nat_S.
-    destruct (zlt (Z.div2 x) (two_power_nat n)); rewrite (Zdecomp x); rewrite Zshiftin_spec.
-    rewrite zlt_true. auto. destruct (Z.odd x); omega.
-    rewrite zlt_false. auto. destruct (Z.odd x); omega.
-    rewrite (Zdecomp x) in H; rewrite Zshiftin_spec in H.
-    rewrite two_power_nat_S in H. destruct (Z.odd x); omega.
-    omega. omega.
+  intros. unfold lt. rewrite signed_zero. unfold signed.
+  generalize (unsigned_range n). rewrite half_modulus_modulus. intros.
+  destruct (zlt (unsigned n) half_modulus).
+- rewrite zlt_false by omega. auto.
+- rewrite zlt_true by omega. ring.
 Qed.
 
-Lemma Zshiftin_ind:
-  forall (P: Z -> Prop),
-  P 0 ->
-  (forall b x, 0 <= x -> P x -> P (Zshiftin b x)) ->
-  forall x, 0 <= x -> P x.
+Theorem divmods2_divs_mods:
+  forall n d,
+  d <> zero -> n <> repr min_signed \/ d <> mone ->
+  divmods2 (if lt n zero then mone else zero) n d = Some (divs n d, mods n d).
 Proof.
-  intros. destruct x.
-  - auto.
-  - induction p.
-    + change (P (Zshiftin true (Z.pos p))). auto.
-    + change (P (Zshiftin false (Z.pos p))). auto.
-    + change (P (Zshiftin true 0)). apply H0. omega. auto.
-  - compute in H1. intuition congruence.
+  unfold divmods2, divs, mods; intros.
+  rewrite dec_eq_false by auto.
+  set (N := signed (if lt n zero then mone else zero) * modulus + unsigned n).
+  set (D := signed d).
+  assert (D <> 0).
+  { unfold D; red; intros. elim H. rewrite <- (repr_signed d). rewrite H1; auto. }
+  assert (N = signed n).
+  { unfold N. rewrite unsigned_signed. destruct (lt n zero).
+    rewrite signed_mone. ring.
+    rewrite signed_zero. ring. }
+  set (Q := Z.quot N D); set (R := Z.rem N D).
+  assert (E2: Z.quotrem N D = (Q, R)).
+  { unfold Q, R, Z.quot, Z.rem. destruct (Z.quotrem N D); auto. }
+  rewrite E2.
+  assert (min_signed <= N <= max_signed) by (rewrite H2; apply signed_range).
+  assert (min_signed <= Q <= max_signed).
+  { unfold Q. destruct (zeq D 1); [ | destruct (zeq D (-1))].
+  - (* D = 1 *)
+    rewrite e. rewrite Z.quot_1_r; auto.
+  - (* D = -1 *)
+    rewrite e. change (-1) with (Z.opp 1). rewrite Z.quot_opp_r by omega.
+    rewrite Z.quot_1_r.
+    assert (N <> min_signed).
+    { red; intros; destruct H0.
+    + elim H0. rewrite <- (repr_signed n). rewrite <- H2. rewrite H4. auto.
+    + elim H0. rewrite <- (repr_signed d). unfold D in e; rewrite e; auto. }
+    unfold min_signed, max_signed in *. omega.
+  - (* |D| > 1 *)
+    assert (Z.abs (Z.quot N D) < half_modulus).
+    { rewrite <- Z.quot_abs by omega. apply Zquot_lt_upper_bound.
+      xomega. xomega.
+      apply Z.le_lt_trans with (half_modulus * 1).
+      rewrite Z.mul_1_r. unfold min_signed, max_signed in H3; xomega.
+      apply Zmult_lt_compat_l. generalize half_modulus_pos; omega. xomega. }
+    rewrite Z.abs_lt in H4.
+    unfold min_signed, max_signed; omega.
+  }
+  unfold proj_sumbool; rewrite ! zle_true by omega; simpl.
+  unfold Q, R; rewrite H2; auto.
 Qed.
 
-Lemma Zshiftin_pos_ind:
-  forall (P: Z -> Prop),
-  P 1 ->
-  (forall b x, 0 < x -> P x -> P (Zshiftin b x)) ->
-  forall x, 0 < x -> P x.
-Proof.
-  intros. destruct x; simpl in H1; try discriminate.
-  induction p.
-    + change (P (Zshiftin true (Z.pos p))). auto.
-    + change (P (Zshiftin false (Z.pos p))). auto.
-    + auto.
-Qed.
-
-Lemma Ztestbit_le:
-  forall x y,
-  0 <= y ->
-  (forall i, 0 <= i -> Z.testbit x i = true -> Z.testbit y i = true) ->
-  x <= y.
-Proof.
-  intros x y0 POS0; revert x; pattern y0; apply Zshiftin_ind; auto; intros.
-  - replace x with 0. omega. apply equal_same_bits; intros.
-    rewrite Ztestbit_0. destruct (Z.testbit x i) as [] eqn:E; auto.
-    exploit H; eauto. rewrite Ztestbit_0. auto.
-  - assert (Z.div2 x0 <= x).
-    { apply H0. intros. exploit (H1 (Zsucc i)).
-        omega. rewrite Ztestbit_succ; auto. rewrite Ztestbit_shiftin_succ; auto.
-    }
-    rewrite (Zdecomp x0). rewrite !Zshiftin_spec.
-    destruct (Z.odd x0) as [] eqn:E1; destruct b as [] eqn:E2; try omega.
-    exploit (H1 0). omega. rewrite Ztestbit_base; auto.
-    rewrite Ztestbit_shiftin_base. congruence.
-Qed.
-
-(** ** Bit-level reasoning over type [int] *)
+(** ** Bit-level properties *)
 
 Definition testbit (x: int) (i: Z) : bool := Z.testbit (unsigned x) i.
 
@@ -1539,12 +1165,12 @@ Lemma sign_bit_of_unsigned:
   forall x, testbit x (zwordsize - 1) = if zlt (unsigned x) half_modulus then false else true.
 Proof.
   intros. unfold testbit.
-  set (ws1 := pred wordsize).
-  assert (zwordsize - 1 = Z_of_nat ws1).
+  set (ws1 := Init.Nat.pred wordsize).
+  assert (zwordsize - 1 = Z.of_nat ws1).
     unfold zwordsize, ws1, wordsize.
     destruct WS.wordsize as [] eqn:E.
     elim WS.wordsize_not_zero; auto.
-    rewrite inj_S. simpl. omega.
+    rewrite Nat2Z.inj_succ. simpl. omega.
   assert (half_modulus = two_power_nat ws1).
     rewrite two_power_nat_two_p. rewrite <- H. apply half_modulus_power.
   rewrite H; rewrite H0.
@@ -1754,6 +1380,15 @@ Proof.
   destruct (testbit x i); destruct (testbit y i); reflexivity || discriminate.
 Qed.
 
+Theorem xor_is_zero: forall x y, eq (xor x y) zero = eq x y.
+Proof.
+  intros. predSpec eq eq_spec (xor x y) zero.
+- apply xor_zero_equal in H. subst y. rewrite eq_true; auto. 
+- predSpec eq eq_spec x y.
++ elim H; subst y; apply xor_idem. 
++ auto.
+Qed. 
+
 Theorem and_xor_distrib:
   forall x y z,
   and x (xor y z) = xor (and x y) (and x z).
@@ -1777,7 +1412,7 @@ Proof.
   rewrite bits_or; auto. rewrite H0; auto.
 Qed.
 
-(** Properties of bitwise complement.*)
+(** ** Properties of bitwise complement.*)
 
 Theorem not_involutive:
   forall (x: int), not (not x) = x.
@@ -1896,7 +1531,7 @@ Proof.
   rewrite xor_idem. rewrite unsigned_one, unsigned_zero; auto.
 Qed.
 
-(** Connections between [add] and bitwise logical operations. *)
+(** ** Connections between [add] and bitwise logical operations. *)
 
 Lemma Z_add_is_or:
   forall i, 0 <= i ->
@@ -2081,6 +1716,16 @@ Proof.
     + omega.
 Qed.
 
+Theorem sub_ltu:
+  forall x y,
+    ltu x y = true ->
+    0 <= unsigned y - unsigned x <= unsigned y.
+Proof.
+  intros.
+  generalize (ltu_inv x y H). intros .
+  split. omega. omega.
+Qed.
+
 Theorem shru_zero: forall x, shru x zero = x.
 Proof.
   bit_solve. rewrite unsigned_zero. rewrite zlt_true. f_equal; omega. omega.
@@ -2231,7 +1876,7 @@ Proof.
   rewrite bits_shru; auto.
   rewrite unsigned_repr.
   destruct (zeq i 0).
-  subst i. rewrite Zplus_0_l. rewrite zlt_true.
+  subst i. rewrite Z.add_0_l. rewrite zlt_true.
   rewrite sign_bit_of_unsigned.
   unfold lt. rewrite signed_zero. unfold signed.
   destruct (zlt (unsigned x) half_modulus).
@@ -2337,7 +1982,7 @@ Proof.
   - rewrite andb_false_r; auto.
   - generalize (unsigned_range n); intros.
     rewrite bits_mone. rewrite andb_true_r. f_equal.
-    symmetry. apply Zmod_small. omega.
+    symmetry. apply Z.mod_small. omega.
     omega.
 Qed.
 
@@ -2363,8 +2008,8 @@ Theorem rol_zero:
   forall x,
   rol x zero = x.
 Proof.
-  bit_solve. f_equal. rewrite unsigned_zero. rewrite Zminus_0_r.
-  apply Zmod_small; auto.
+  bit_solve. f_equal. rewrite unsigned_zero. rewrite Z.sub_0_r.
+  apply Z.mod_small; auto.
 Qed.
 
 Lemma bitwise_binop_rol:
@@ -2400,7 +2045,7 @@ Qed.
 
 Theorem rol_rol:
   forall x n m,
-  Zdivide zwordsize modulus ->
+  Z.divide zwordsize modulus ->
   rol (rol x n) m = rol x (modu (add n m) iwordsize).
 Proof.
   bit_solve. f_equal. apply eqmod_mod_eq. apply wordsize_pos.
@@ -2412,7 +2057,7 @@ Proof.
   replace (i - M - N) with (i - (M + N)) by omega.
   apply eqmod_sub.
   apply eqmod_refl.
-  apply eqmod_trans with (Zmod (unsigned n + unsigned m) zwordsize).
+  apply eqmod_trans with (Z.modulo (unsigned n + unsigned m) zwordsize).
   replace (M + N) with (N + M) by omega. apply eqmod_mod. apply wordsize_pos.
   unfold modu, add. fold M; fold N. rewrite unsigned_repr_wordsize.
   assert (forall a, eqmod zwordsize a (unsigned (repr a))).
@@ -2431,7 +2076,7 @@ Qed.
 
 Theorem rolm_rolm:
   forall x n1 m1 n2 m2,
-  Zdivide zwordsize modulus ->
+  Z.divide zwordsize modulus ->
   rolm (rolm x n1 m1) n2 m2 =
     rolm x (modu (add n1 n2) iwordsize)
            (and (rol m1 n2) m2).
@@ -2489,65 +2134,31 @@ Proof.
   rewrite !testbit_repr; auto.
   rewrite !Z.lor_spec. rewrite orb_comm. f_equal; apply same_bits_eqm; auto.
   - apply eqm_unsigned_repr_r. apply eqm_refl2. f_equal.
-    rewrite Zmod_small; auto.
+    rewrite Z.mod_small; auto.
     assert (unsigned (add y z) = zwordsize).
       rewrite H1. apply unsigned_repr_wordsize.
     unfold add in H5. rewrite unsigned_repr in H5.
     omega.
     generalize two_wordsize_max_unsigned; omega.
   - apply eqm_unsigned_repr_r. apply eqm_refl2. f_equal.
-    apply Zmod_small; auto.
+    apply Z.mod_small; auto.
 Qed.
 
-(** ** Properties of [Z_one_bits] and [is_power2]. *)
+(** ** Properties of [is_power2]. *)
 
-Fixpoint powerserie (l: list Z): Z :=
-  match l with
-  | nil => 0
-  | x :: xs => two_p x + powerserie xs
-  end.
-
-Lemma Z_one_bits_powerserie:
-  forall x, 0 <= x < modulus -> x = powerserie (Z_one_bits wordsize x 0).
+Remark is_power2_inv:
+  forall n logn,
+  is_power2 n = Some logn ->
+  Z_is_power2 (unsigned n) = Some (unsigned logn) /\ 0 <= unsigned logn < zwordsize.
 Proof.
-  assert (forall n x i,
-    0 <= i ->
-    0 <= x < two_power_nat n ->
-    x * two_p i = powerserie (Z_one_bits n x i)).
-  {
-  induction n; intros.
-  simpl. rewrite two_power_nat_O in H0.
-  assert (x = 0) by omega. subst x. omega.
-  rewrite two_power_nat_S in H0. simpl Z_one_bits.
-  rewrite (Zdecomp x) in H0. rewrite Zshiftin_spec in H0.
-  assert (EQ: Z.div2 x * two_p (i + 1) = powerserie (Z_one_bits n (Z.div2 x) (i + 1))).
-    apply IHn. omega.
-    destruct (Z.odd x); omega.
-  rewrite two_p_is_exp in EQ. change (two_p 1) with 2 in EQ.
-  rewrite (Zdecomp x) at 1. rewrite Zshiftin_spec.
-  destruct (Z.odd x); simpl powerserie; rewrite <- EQ; ring.
-  omega. omega.
-  }
-  intros. rewrite <- H. change (two_p 0) with 1. omega.
-  omega. exact H0.
-Qed.
-
-Lemma Z_one_bits_range:
-  forall x i, In i (Z_one_bits wordsize x 0) -> 0 <= i < zwordsize.
-Proof.
-  assert (forall n x i j,
-    In j (Z_one_bits n x i) -> i <= j < i + Z_of_nat n).
-  {
-  induction n; simpl In.
-  tauto.
-  intros x i j. rewrite inj_S.
-  assert (In j (Z_one_bits n (Z.div2 x) (i + 1)) -> i <= j < i + Z.succ (Z.of_nat n)).
-    intros. exploit IHn; eauto. omega.
-  destruct (Z.odd x); simpl.
-  intros [A|B]. subst j. omega. auto.
-  auto.
-  }
-  intros. generalize (H wordsize x 0 i H0). fold zwordsize; omega.
+  unfold is_power2; intros.
+  destruct (Z_is_power2 (unsigned n)) as [i|] eqn:E; inv H.
+  assert (0 <= i < zwordsize).
+  { apply Z_is_power2_range with (unsigned n). 
+    generalize wordsize_pos; omega.
+    rewrite <- modulus_power. apply unsigned_range.
+    auto. }
+  rewrite unsigned_repr; auto. generalize wordsize_max_unsigned; omega.
 Qed.
 
 Lemma is_power2_rng:
@@ -2555,16 +2166,7 @@ Lemma is_power2_rng:
   is_power2 n = Some logn ->
   0 <= unsigned logn < zwordsize.
 Proof.
-  intros n logn. unfold is_power2.
-  generalize (Z_one_bits_range (unsigned n)).
-  destruct (Z_one_bits wordsize (unsigned n) 0).
-  intros; discriminate.
-  destruct l.
-  intros. injection H0; intro; subst logn; clear H0.
-  assert (0 <= z < zwordsize).
-  apply H. auto with coqlib.
-  rewrite unsigned_repr. auto. generalize wordsize_max_unsigned; omega.
-  intros; discriminate.
+  intros. apply (is_power2_inv n logn); auto.
 Qed.
 
 Theorem is_power2_range:
@@ -2580,18 +2182,8 @@ Lemma is_power2_correct:
   is_power2 n = Some logn ->
   unsigned n = two_p (unsigned logn).
 Proof.
-  intros n logn. unfold is_power2.
-  generalize (Z_one_bits_powerserie (unsigned n) (unsigned_range n)).
-  generalize (Z_one_bits_range (unsigned n)).
-  destruct (Z_one_bits wordsize (unsigned n) 0).
-  intros; discriminate.
-  destruct l.
-  intros. simpl in H0. injection H1; intros; subst logn; clear H1.
-  rewrite unsigned_repr. replace (two_p z) with (two_p z + 0).
-  auto. omega. elim (H z); intros.
-  generalize wordsize_max_unsigned; omega.
-  auto with coqlib.
-  intros; discriminate.
+  intros. apply is_power2_inv in H. destruct H as [P Q].
+  apply Z_is_power2_sound in P. tauto.
 Qed.
 
 Remark two_p_range:
@@ -2606,53 +2198,18 @@ Proof.
   unfold max_unsigned, modulus. omega.
 Qed.
 
-Remark Z_one_bits_zero:
-  forall n i, Z_one_bits n 0 i = nil.
-Proof.
-  induction n; intros; simpl; auto.
-Qed.
-
-Remark Z_one_bits_two_p:
-  forall n x i,
-  0 <= x < Z_of_nat n ->
-  Z_one_bits n (two_p x) i = (i + x) :: nil.
-Proof.
-  induction n; intros; simpl. simpl in H. omegaContradiction.
-  rewrite inj_S in H.
-  assert (x = 0 \/ 0 < x) by omega. destruct H0.
-  subst x; simpl. decEq. omega. apply Z_one_bits_zero.
-  assert (Z.odd (two_p x) = false /\ Z.div2 (two_p x) = two_p (x-1)).
-    apply Zshiftin_inj. rewrite <- Zdecomp. rewrite !Zshiftin_spec.
-    rewrite <- two_p_S. rewrite Zplus_0_r. f_equal; omega. omega.
-  destruct H1 as [A B]; rewrite A; rewrite B.
-  rewrite IHn. f_equal; omega. omega.
-Qed.
-
 Lemma is_power2_two_p:
   forall n, 0 <= n < zwordsize ->
   is_power2 (repr (two_p n)) = Some (repr n).
 Proof.
   intros. unfold is_power2. rewrite unsigned_repr.
-  rewrite Z_one_bits_two_p. auto. auto.
+  rewrite Z_is_power2_complete by omega; auto.
   apply two_p_range. auto.
 Qed.
 
 (** ** Relation between bitwise operations and multiplications / divisions by powers of 2 *)
 
 (** Left shifts and multiplications by powers of 2. *)
-
-Lemma Zshiftl_mul_two_p:
-  forall x n, 0 <= n -> Z.shiftl x n = x * two_p n.
-Proof.
-  intros. destruct n; simpl.
-  - omega.
-  - pattern p. apply Pos.peano_ind.
-    + change (two_power_pos 1) with 2. simpl. ring.
-    + intros. rewrite Pos.iter_succ. rewrite H0.
-      rewrite Pplus_one_succ_l. rewrite two_power_pos_is_exp.
-      change (two_power_pos 1) with 2. ring.
-  - compute in H. congruence.
-Qed.
 
 Lemma shl_mul_two_p:
   forall x y,
@@ -2713,21 +2270,6 @@ Qed.
 
 (** Unsigned right shifts and unsigned divisions by powers of 2. *)
 
-Lemma Zshiftr_div_two_p:
-  forall x n, 0 <= n -> Z.shiftr x n = x / two_p n.
-Proof.
-  intros. destruct n; unfold Z.shiftr; simpl.
-  - rewrite Zdiv_1_r. auto.
-  - pattern p. apply Pos.peano_ind.
-    + change (two_power_pos 1) with 2. simpl. apply Zdiv2_div.
-    + intros. rewrite Pos.iter_succ. rewrite H0.
-      rewrite Pplus_one_succ_l. rewrite two_power_pos_is_exp.
-      change (two_power_pos 1) with 2.
-      rewrite Zdiv2_div. rewrite Zmult_comm. apply Zdiv_Zdiv.
-      rewrite two_power_pos_nat. apply two_power_nat_pos. omega.
-  - compute in H. congruence.
-Qed.
-
 Lemma shru_div_two_p:
   forall x y,
   shru x y = repr (unsigned x / two_p (unsigned y)).
@@ -2770,43 +2312,6 @@ Qed.
 
 (** Unsigned modulus over [2^n] is masking with [2^n-1]. *)
 
-Lemma Ztestbit_mod_two_p:
-  forall n x i,
-  0 <= n -> 0 <= i ->
-  Z.testbit (x mod (two_p n)) i = if zlt i n then Z.testbit x i else false.
-Proof.
-  intros n0 x i N0POS. revert x i; pattern n0; apply natlike_ind; auto.
-  - intros. change (two_p 0) with 1. rewrite Zmod_1_r. rewrite Z.testbit_0_l.
-    rewrite zlt_false; auto. omega.
-  - intros. rewrite two_p_S; auto.
-    replace (x0 mod (2 * two_p x))
-       with (Zshiftin (Z.odd x0) (Z.div2 x0 mod two_p x)).
-    rewrite Ztestbit_shiftin; auto. rewrite (Ztestbit_eq i x0); auto. destruct (zeq i 0).
-    + rewrite zlt_true; auto. omega.
-    + rewrite H0. destruct (zlt (Z.pred i) x).
-      * rewrite zlt_true; auto. omega.
-      * rewrite zlt_false; auto. omega.
-      * omega.
-    + rewrite (Zdecomp x0) at 3. set (x1 := Z.div2 x0). symmetry.
-      apply Zmod_unique with (x1 / two_p x).
-      rewrite !Zshiftin_spec. rewrite Zplus_assoc. f_equal.
-      transitivity (2 * (two_p x * (x1 / two_p x) + x1 mod two_p x)).
-      f_equal. apply Z_div_mod_eq. apply two_p_gt_ZERO; auto.
-      ring.
-      rewrite Zshiftin_spec. exploit (Z_mod_lt x1 (two_p x)). apply two_p_gt_ZERO; auto.
-      destruct (Z.odd x0); omega.
-Qed.
-
-Corollary Ztestbit_two_p_m1:
-  forall n i, 0 <= n -> 0 <= i ->
-  Z.testbit (two_p n - 1) i = if zlt i n then true else false.
-Proof.
-  intros. replace (two_p n - 1) with ((-1) mod (two_p n)).
-  rewrite Ztestbit_mod_two_p; auto. destruct (zlt i n); auto. apply Ztestbit_m1; auto.
-  apply Zmod_unique with (-1). ring.
-  exploit (two_p_gt_ZERO n). auto. omega.
-Qed.
-
 Theorem modu_and:
   forall x n logn,
   is_power2 n = Some logn ->
@@ -2828,20 +2333,12 @@ Qed.
 
 (** ** Properties of [shrx] (signed division by a power of 2) *)
 
-Lemma Zquot_Zdiv:
-  forall x y,
-  y > 0 ->
-  Z.quot x y = if zlt x 0 then (x + y - 1) / y else x / y.
+Theorem shrx_zero:
+  forall x, zwordsize > 1 -> shrx x zero = x.
 Proof.
-  intros. destruct (zlt x 0).
-  - symmetry. apply Zquot_unique_full with ((x + y - 1) mod y - (y - 1)).
-     + red. right; split. omega.
-       exploit (Z_mod_lt (x + y - 1) y); auto.
-       rewrite Z.abs_eq. omega. omega.
-     + transitivity ((y * ((x + y - 1) / y) + (x + y - 1) mod y) - (y-1)).
-       rewrite <- Z_div_mod_eq. ring. auto. ring.
-  - apply Zquot_Zdiv_pos; omega.
-Qed.
+  intros. unfold shrx. rewrite shl_zero. unfold divs. rewrite signed_one by auto.
+  rewrite Z.quot_1_r. apply repr_signed.
+Qed. 
 
 Theorem shrx_shr:
   forall x y,
@@ -2912,17 +2409,6 @@ Proof.
 - replace (shru zero (sub iwordsize y)) with zero.
   rewrite add_zero; auto.
   bit_solve. destruct (zlt (i + unsigned (sub iwordsize y)) zwordsize); auto.
-Qed.
-
-Lemma Zdiv_shift:
-  forall x y, y > 0 ->
-  (x + (y - 1)) / y = x / y + if zeq (Zmod x y) 0 then 0 else 1.
-Proof.
-  intros. generalize (Z_div_mod_eq x y H). generalize (Z_mod_lt x y H).
-  set (q := x / y). set (r := x mod y). intros.
-  destruct (zeq r 0).
-  apply Zdiv_unique with (y - 1). rewrite H1. rewrite e. ring. omega.
-  apply Zdiv_unique with (r - 1). rewrite H1. ring. omega.
 Qed.
 
 Theorem shrx_carry:
@@ -3015,51 +2501,6 @@ Qed.
 
 (** ** Properties of integer zero extension and sign extension. *)
 
-Lemma Ziter_base:
-  forall (A: Type) n (f: A -> A) x, n <= 0 -> Z.iter n f x = x.
-Proof.
-  intros. unfold Z.iter. destruct n; auto. compute in H. elim H; auto.
-Qed.
-
-Lemma Ziter_succ:
-  forall (A: Type) n (f: A -> A) x,
-  0 <= n -> Z.iter (Z.succ n) f x = f (Z.iter n f x).
-Proof.
-  intros. destruct n; simpl.
-  - auto.
-  - rewrite Pos.add_1_r. apply Pos.iter_succ.
-  - compute in H. elim H; auto.
-Qed.
-
-Lemma Znatlike_ind:
-  forall (P: Z -> Prop),
-  (forall n, n <= 0 -> P n) ->
-  (forall n, 0 <= n -> P n -> P (Z.succ n)) ->
-  forall n, P n.
-Proof.
-  intros. destruct (zle 0 n).
-  apply natlike_ind; auto. apply H; omega.
-  apply H. omega.
-Qed.
-
-Lemma Zzero_ext_spec:
-  forall n x i, 0 <= i ->
-  Z.testbit (Zzero_ext n x) i = if zlt i n then Z.testbit x i else false.
-Proof.
-  unfold Zzero_ext. induction n using Znatlike_ind.
-  - intros. rewrite Ziter_base; auto.
-    rewrite zlt_false. rewrite Ztestbit_0; auto. omega.
-  - intros. rewrite Ziter_succ; auto.
-    rewrite Ztestbit_shiftin; auto.
-    rewrite (Ztestbit_eq i x); auto.
-    destruct (zeq i 0).
-    + subst i. rewrite zlt_true; auto. omega.
-    + rewrite IHn. destruct (zlt (Z.pred i) n).
-      rewrite zlt_true; auto. omega.
-      rewrite zlt_false; auto. omega.
-      omega.
-Qed.
-
 Lemma bits_zero_ext:
   forall n x i, 0 <= i ->
   testbit (zero_ext n x) i = if zlt i n then testbit x i else false.
@@ -3067,35 +2508,6 @@ Proof.
   intros. unfold zero_ext. destruct (zlt i zwordsize).
   rewrite testbit_repr; auto. rewrite Zzero_ext_spec. auto. auto.
   rewrite !bits_above; auto. destruct (zlt i n); auto.
-Qed.
-
-Lemma Zsign_ext_spec:
-  forall n x i, 0 <= i -> 0 < n ->
-  Z.testbit (Zsign_ext n x) i = Z.testbit x (if zlt i n then i else n - 1).
-Proof.
-  intros n0 x i I0 N0.
-  revert x i I0. pattern n0. apply Zlt_lower_bound_ind with (z := 1).
-  - unfold Zsign_ext. intros.
-    destruct (zeq x 1).
-    + subst x; simpl.
-      replace (if zlt i 1 then i else 0) with 0.
-      rewrite Ztestbit_base.
-      destruct (Z.odd x0).
-      apply Ztestbit_m1; auto.
-      apply Ztestbit_0.
-      destruct (zlt i 1); omega.
-    + set (x1 := Z.pred x). replace x1 with (Z.succ (Z.pred x1)).
-      rewrite Ziter_succ. rewrite Ztestbit_shiftin.
-      destruct (zeq i 0).
-      * subst i. rewrite zlt_true. rewrite Ztestbit_base; auto. omega.
-      * rewrite H. unfold x1. destruct (zlt (Z.pred i) (Z.pred x)).
-        rewrite zlt_true. rewrite (Ztestbit_eq i x0); auto. rewrite zeq_false; auto. omega.
-        rewrite zlt_false. rewrite (Ztestbit_eq (x - 1) x0). rewrite zeq_false; auto.
-        omega. omega. omega. unfold x1; omega. omega.
-      * omega.
-      * unfold x1; omega.
-      * omega.
-  - omega.
 Qed.
 
 Lemma bits_sign_ext:
@@ -3136,7 +2548,7 @@ Qed.
 
 Theorem zero_ext_mod:
   forall n x, 0 <= n < zwordsize ->
-  unsigned (zero_ext n x) = Zmod (unsigned x) (two_p n).
+  unsigned (zero_ext n x) = Z.modulo (unsigned x) (two_p n).
 Proof.
   intros. apply equal_same_bits. intros.
   rewrite Ztestbit_mod_two_p; auto.
@@ -3379,7 +2791,7 @@ Proof.
     repeat rewrite unsigned_repr. tauto.
     generalize wordsize_max_unsigned; omega.
     generalize wordsize_max_unsigned; omega.
-  intros. unfold one_bits in H.
+  unfold one_bits. intros.
   destruct (list_in_map_inv _ _ _ H) as [i0 [EQ IN]].
   subst i. apply A. apply Z_one_bits_range with (unsigned x); auto.
 Qed.
@@ -3399,7 +2811,7 @@ Proof.
   auto with ints. decEq. apply Z_one_bits_powerserie.
   auto with ints.
   unfold one_bits.
-  generalize (Z_one_bits_range (unsigned x)).
+  generalize (Z_one_bits_range wordsize (unsigned x)).
   generalize (Z_one_bits wordsize (unsigned x) 0).
   induction l.
   intros; reflexivity.
@@ -3407,7 +2819,8 @@ Proof.
   apply eqm_add. rewrite shl_mul_two_p. rewrite mul_commut.
   rewrite mul_one. apply eqm_unsigned_repr_r.
   rewrite unsigned_repr. auto with ints.
-  generalize (H a (in_eq _ _)). generalize wordsize_max_unsigned. omega.
+  generalize (H a (in_eq _ _)). change (Z.of_nat wordsize) with zwordsize.
+  generalize wordsize_max_unsigned. omega.
   auto with ints.
   intros; apply H; auto with coqlib.
 Qed.
@@ -3529,7 +2942,7 @@ Theorem lt_sub_overflow:
   xor (sub_overflow x y zero) (negative (sub x y)) = if lt x y then one else zero.
 Proof.
   intros. unfold negative, sub_overflow, lt. rewrite sub_signed.
-  rewrite signed_zero. rewrite Zminus_0_r.
+  rewrite signed_zero. rewrite Z.sub_0_r.
   generalize (signed_range x) (signed_range y).
   set (X := signed x); set (Y := signed y). intros RX RY.
   unfold min_signed, max_signed in *.
@@ -3561,7 +2974,53 @@ Proof.
     unfold min_signed, max_signed; omega.
 Qed.
 
-(** Non-overlapping test *)
+Lemma signed_eq:
+  forall x y, eq x y = zeq (signed x) (signed y).
+Proof.
+  intros. unfold eq. unfold proj_sumbool.
+  destruct (zeq (unsigned x) (unsigned y));
+  destruct (zeq (signed x) (signed y)); auto.
+  elim n. unfold signed. rewrite e; auto.
+  elim n. apply eqm_small_eq; auto with ints.
+  eapply eqm_trans. apply eqm_sym. apply eqm_signed_unsigned.
+  rewrite e. apply eqm_signed_unsigned.
+Qed.
+
+Lemma not_lt:
+  forall x y, negb (lt y x) = (lt x y || eq x y).
+Proof.
+  intros. unfold lt. rewrite signed_eq. unfold proj_sumbool.
+  destruct (zlt (signed y) (signed x)).
+  rewrite zlt_false. rewrite zeq_false. auto. omega. omega.
+  destruct (zeq (signed x) (signed y)).
+  rewrite zlt_false. auto. omega.
+  rewrite zlt_true. auto. omega.
+Qed.
+
+Lemma lt_not:
+  forall x y, lt y x = negb (lt x y) && negb (eq x y).
+Proof.
+  intros. rewrite <- negb_orb. rewrite <- not_lt. rewrite negb_involutive. auto.
+Qed.
+
+Lemma not_ltu:
+  forall x y, negb (ltu y x) = (ltu x y || eq x y).
+Proof.
+  intros. unfold ltu, eq.
+  destruct (zlt (unsigned y) (unsigned x)).
+  rewrite zlt_false. rewrite zeq_false. auto. omega. omega.
+  destruct (zeq (unsigned x) (unsigned y)).
+  rewrite zlt_false. auto. omega.
+  rewrite zlt_true. auto. omega.
+Qed.
+
+Lemma ltu_not:
+  forall x y, ltu y x = negb (ltu x y) && negb (eq x y).
+Proof.
+  intros. rewrite <- negb_orb. rewrite <- not_ltu. rewrite negb_involutive. auto.
+Qed.
+
+(** ** Non-overlapping test *)
 
 Definition no_overlap (ofs1: int) (sz1: Z) (ofs2: int) (sz2: Z) : bool :=
   let x1 := unsigned ofs1 in let x2 := unsigned ofs2 in
@@ -3577,8 +3036,8 @@ Proof.
   intros.
   destruct (andb_prop _ _ H1). clear H1.
   destruct (andb_prop _ _ H2). clear H2.
-  exploit proj_sumbool_true. eexact H1. intro A; clear H1.
-  exploit proj_sumbool_true. eexact H4. intro B; clear H4.
+  apply proj_sumbool_true in H1.
+  apply proj_sumbool_true in H4.
   assert (unsigned ofs1 + sz1 <= unsigned ofs2 \/ unsigned ofs2 + sz2 <= unsigned ofs1).
   destruct (orb_prop _ _ H3). left. eapply proj_sumbool_true; eauto. right. eapply proj_sumbool_true; eauto.
   clear H3.
@@ -3587,93 +3046,9 @@ Proof.
   intros [C|C] [D|D]; omega.
 Qed.
 
-(** Size of integers, in bits. *)
-
-Definition Zsize (x: Z) : Z :=
-  match x with
-  | Zpos p => Zpos (Pos.size p)
-  | _ => 0
-  end.
+(** ** Size of integers, in bits. *)
 
 Definition size (x: int) : Z := Zsize (unsigned x).
-
-Remark Zsize_pos: forall x, 0 <= Zsize x.
-Proof.
-  destruct x; simpl. omega. compute; intuition congruence. omega.
-Qed.
-
-Remark Zsize_pos': forall x, 0 < x -> 0 < Zsize x.
-Proof.
-  destruct x; simpl; intros; try discriminate. compute; auto.
-Qed.
-
-Lemma Zsize_shiftin:
-  forall b x, 0 < x -> Zsize (Zshiftin b x) = Zsucc (Zsize x).
-Proof.
-  intros. destruct x; compute in H; try discriminate.
-  destruct b.
-  change (Zshiftin true (Zpos p)) with (Zpos (p~1)).
-  simpl. f_equal. rewrite Pos.add_1_r; auto.
-  change (Zshiftin false (Zpos p)) with (Zpos (p~0)).
-  simpl. f_equal. rewrite Pos.add_1_r; auto.
-Qed.
-
-Lemma Ztestbit_size_1:
-  forall x, 0 < x -> Z.testbit x (Zpred (Zsize x)) = true.
-Proof.
-  intros x0 POS0; pattern x0; apply Zshiftin_pos_ind; auto.
-  intros. rewrite Zsize_shiftin; auto.
-  replace (Z.pred (Z.succ (Zsize x))) with (Z.succ (Z.pred (Zsize x))) by omega.
-  rewrite Ztestbit_shiftin_succ. auto. generalize (Zsize_pos' x H); omega.
-Qed.
-
-Lemma Ztestbit_size_2:
-  forall x, 0 <= x -> forall i, i >= Zsize x -> Z.testbit x i = false.
-Proof.
-  intros x0 POS0. destruct (zeq x0 0).
-  - subst x0; intros. apply Ztestbit_0.
-  - pattern x0; apply Zshiftin_pos_ind.
-    + simpl. intros. change 1 with (Zshiftin true 0). rewrite Ztestbit_shiftin.
-      rewrite zeq_false. apply Ztestbit_0. omega. omega.
-    + intros. rewrite Zsize_shiftin in H1; auto.
-      generalize (Zsize_pos' _ H); intros.
-      rewrite Ztestbit_shiftin. rewrite zeq_false. apply H0. omega.
-      omega. omega.
-    + omega.
-Qed.
-
-Lemma Zsize_interval_1:
-  forall x, 0 <= x -> 0 <= x < two_p (Zsize x).
-Proof.
-  intros.
-  assert (x = x mod (two_p (Zsize x))).
-    apply equal_same_bits; intros.
-    rewrite Ztestbit_mod_two_p; auto.
-    destruct (zlt i (Zsize x)). auto. apply Ztestbit_size_2; auto.
-    apply Zsize_pos; auto.
-  rewrite H0 at 1. rewrite H0 at 3. apply Z_mod_lt. apply two_p_gt_ZERO. apply Zsize_pos; auto.
-Qed.
-
-Lemma Zsize_interval_2:
-  forall x n, 0 <= n -> 0 <= x < two_p n -> n >= Zsize x.
-Proof.
-  intros. set (N := Z.to_nat n).
-  assert (Z.of_nat N = n) by (apply Z2Nat.id; auto).
-  rewrite <- H1 in H0. rewrite <- two_power_nat_two_p in H0.
-  destruct (zeq x 0).
-  subst x; simpl; omega.
-  destruct (zlt n (Zsize x)); auto.
-  exploit (Ztestbit_above N x (Zpred (Zsize x))). auto. omega.
-  rewrite Ztestbit_size_1. congruence. omega.
-Qed.
-
-Lemma Zsize_monotone:
-  forall x y, 0 <= x <= y -> Zsize x <= Zsize y.
-Proof.
-  intros. apply Zge_le. apply Zsize_interval_2. apply Zsize_pos.
-  exploit (Zsize_interval_1 y). omega.
-  omega.
-Qed.
 
 Theorem size_zero: size zero = 0.
 Proof.
@@ -3681,7 +3056,7 @@ Proof.
 Qed.
 
 Theorem bits_size_1:
-  forall x, x = zero \/ testbit x (Zpred (size x)) = true.
+  forall x, x = zero \/ testbit x (Z.pred (size x)) = true.
 Proof.
   intros. destruct (zeq (unsigned x) 0).
   left. rewrite <- (repr_unsigned x). rewrite e; auto.
@@ -3721,7 +3096,7 @@ Qed.
 Theorem bits_size_4:
   forall x n,
   0 <= n ->
-  testbit x (Zpred n) = true ->
+  testbit x (Z.pred n) = true ->
   (forall i, n <= i < zwordsize -> testbit x i = false) ->
   size x = n.
 Proof.
@@ -3836,7 +3211,7 @@ Strategy 0 [Wordsize_32.wordsize].
 Notation int := Int.int.
 
 Remark int_wordsize_divides_modulus:
-  Zdivide (Z_of_nat Int.wordsize) Int.modulus.
+  Z.divide (Z.of_nat Int.wordsize) Int.modulus.
 Proof.
   exists (two_p (32-5)); reflexivity.
 Qed.
@@ -3877,6 +3252,13 @@ Definition shru' (x: int) (y: Int.int): int :=
   repr (Z.shiftr (unsigned x) (Int.unsigned y)).
 Definition shr' (x: int) (y: Int.int): int :=
   repr (Z.shiftr (signed x) (Int.unsigned y)).
+Definition rol' (x: int) (y: Int.int): int :=
+  rol x (repr (Int.unsigned y)).
+Definition shrx' (x: int) (y: Int.int): int :=
+  divs x (shl' one y).
+Definition shr_carry' (x: int) (y: Int.int): int :=
+  if lt x zero && negb (eq (and x (sub (shl' one y) one)) zero)
+  then one else zero.
 
 Lemma bits_shl':
   forall x y i,
@@ -3914,6 +3296,309 @@ Proof.
   rewrite Z.shiftr_spec. apply bits_signed.
   generalize (Int.unsigned_range y); omega.
   omega.
+Qed.
+
+Lemma shl'_mul_two_p:
+  forall x y,
+  shl' x y = mul x (repr (two_p (Int.unsigned y))).
+Proof.
+  intros. unfold shl', mul. apply eqm_samerepr.
+  rewrite Zshiftl_mul_two_p. apply eqm_mult. apply eqm_refl. apply eqm_unsigned_repr.
+  generalize (Int.unsigned_range y); omega.
+Qed.
+
+Lemma shl'_one_two_p:
+  forall y, shl' one y = repr (two_p (Int.unsigned y)).
+Proof.
+  intros. rewrite shl'_mul_two_p. rewrite mul_commut. rewrite mul_one. auto.
+Qed.
+
+Theorem shl'_mul:
+  forall x y,
+  shl' x y = mul x (shl' one y).
+Proof.
+  intros. rewrite shl'_one_two_p. apply shl'_mul_two_p.
+Qed.
+
+Theorem shl'_zero:
+  forall x, shl' x Int.zero = x.
+Proof.
+  intros. unfold shl'. rewrite Int.unsigned_zero. unfold Z.shiftl.
+  apply repr_unsigned.
+Qed.
+
+Theorem shru'_zero :
+  forall x, shru' x Int.zero = x.
+Proof.
+  intros. unfold shru'. rewrite Int.unsigned_zero. unfold Z.shiftr.
+  apply repr_unsigned.
+Qed.
+
+Theorem shr'_zero :
+  forall x, shr' x Int.zero = x.
+Proof.
+  intros. unfold shr'. rewrite Int.unsigned_zero. unfold Z.shiftr.
+  apply repr_signed.
+Qed.
+
+Theorem shrx'_zero:
+  forall x, shrx' x Int.zero = x.
+Proof.
+  intros. change (shrx' x Int.zero) with (shrx x zero). apply shrx_zero. compute; auto.
+Qed.
+
+Theorem shrx'_carry:
+  forall x y,
+  Int.ltu y (Int.repr 63) = true ->
+  shrx' x y = add (shr' x y) (shr_carry' x y).
+Proof.
+  intros. apply Int.ltu_inv in H. change (Int.unsigned (Int.repr 63)) with 63 in H.
+  set (y1 := Int64.repr (Int.unsigned y)).
+  assert (U: unsigned y1 = Int.unsigned y).
+  { apply unsigned_repr. assert (63 < max_unsigned) by reflexivity. omega. }
+  transitivity (shrx x y1).
+- unfold shrx', shrx, shl', shl. rewrite U; auto.
+- rewrite shrx_carry. 
++ f_equal. 
+  unfold shr, shr'. rewrite U; auto.
+  unfold shr_carry, shr_carry', shl, shl'. rewrite U; auto.
++ unfold ltu. apply zlt_true. rewrite U; tauto. 
+Qed.
+
+Theorem shrx'_shr_2:
+  forall x y,
+  Int.ltu y (Int.repr 63) = true ->
+  shrx' x y = shr' (add x (shru' (shr' x (Int.repr 63)) (Int.sub (Int.repr 64) y))) y.
+Proof.
+  intros.
+  set (z := repr (Int.unsigned y)).
+  apply Int.ltu_inv in H. change (Int.unsigned (Int.repr 63)) with 63 in H.
+  assert (N1: 63 < max_unsigned) by reflexivity.
+  assert (N2: 63 < Int.max_unsigned) by reflexivity.
+  assert (A: unsigned z = Int.unsigned y).
+  { unfold z; apply unsigned_repr; omega. }
+  assert (B: unsigned (sub (repr 64) z) = Int.unsigned (Int.sub (Int.repr 64) y)).
+  { unfold z. unfold sub, Int.sub.
+    change (unsigned (repr 64)) with 64.
+    change (Int.unsigned (Int.repr 64)) with 64.
+    rewrite (unsigned_repr (Int.unsigned y)) by omega.
+    rewrite unsigned_repr, Int.unsigned_repr by omega.
+    auto. }
+  unfold shrx', shr', shru', shl'.
+  rewrite <- A.
+  change (Int.unsigned (Int.repr 63)) with (unsigned (repr 63)).
+  rewrite <- B.
+  apply shrx_shr_2.
+  unfold ltu. apply zlt_true. change (unsigned z < 63). rewrite A; omega.
+Qed.
+
+Remark int_ltu_2_inv:
+  forall y z,
+  Int.ltu y iwordsize' = true ->
+  Int.ltu z iwordsize' = true ->
+  Int.unsigned (Int.add y z) <= Int.unsigned iwordsize' ->
+  let y' := repr (Int.unsigned y) in
+  let z' := repr (Int.unsigned z) in
+     Int.unsigned y = unsigned y'
+  /\ Int.unsigned z = unsigned z'
+  /\ ltu y' iwordsize = true
+  /\ ltu z' iwordsize = true
+  /\ Int.unsigned (Int.add y z) = unsigned (add y' z')
+  /\ add y' z' = repr (Int.unsigned (Int.add y z)).
+Proof.
+  intros. apply Int.ltu_inv in H. apply Int.ltu_inv in H0.
+  change (Int.unsigned iwordsize') with 64 in *.
+  assert (128 < max_unsigned) by reflexivity.
+  assert (128 < Int.max_unsigned) by reflexivity.
+  assert (Y: unsigned y' = Int.unsigned y) by (apply unsigned_repr; omega).
+  assert (Z: unsigned z' = Int.unsigned z) by (apply unsigned_repr; omega).
+  assert (P: Int.unsigned (Int.add y z) = unsigned (add y' z')).
+  { unfold Int.add. rewrite Int.unsigned_repr by omega.
+    unfold add. rewrite unsigned_repr by omega. congruence. }
+  intuition auto.
+  apply zlt_true. rewrite Y; auto.
+  apply zlt_true. rewrite Z; auto.
+  rewrite P. rewrite repr_unsigned. auto.
+Qed.
+
+Theorem or_ror':
+  forall x y z,
+  Int.ltu y iwordsize' = true ->
+  Int.ltu z iwordsize' = true ->
+  Int.add y z = iwordsize' ->
+  ror x (repr (Int.unsigned z)) = or (shl' x y) (shru' x z).
+Proof.
+  intros. destruct (int_ltu_2_inv y z) as (A & B & C & D & E & F); auto. rewrite H1; omega.
+  replace (shl' x y) with (shl x (repr (Int.unsigned y))).
+  replace (shru' x z) with (shru x (repr (Int.unsigned z))).
+  apply or_ror; auto. rewrite F, H1. reflexivity.
+  unfold shru, shru'; rewrite <- B; auto.
+  unfold shl, shl'; rewrite <- A; auto.
+Qed.
+
+Theorem shl'_shl':
+  forall x y z,
+  Int.ltu y iwordsize' = true ->
+  Int.ltu z iwordsize' = true ->
+  Int.ltu (Int.add y z) iwordsize' = true ->
+  shl' (shl' x y) z = shl' x (Int.add y z).
+Proof.
+  intros. apply Int.ltu_inv in H1.
+  destruct (int_ltu_2_inv y z) as (A & B & C & D & E & F); auto. omega.
+  set (y' := repr (Int.unsigned y)) in *.
+  set (z' := repr (Int.unsigned z)) in *.
+  replace (shl' x y) with (shl x y').
+  replace (shl' (shl x y') z) with (shl (shl x y') z').
+  replace (shl' x (Int.add y z)) with (shl x (add y' z')).
+  apply shl_shl; auto. apply zlt_true. rewrite <- E.
+  change (unsigned iwordsize) with zwordsize. tauto.
+  unfold shl, shl'. rewrite E; auto.
+  unfold shl at 1, shl'. rewrite <- B; auto.
+  unfold shl, shl'; rewrite <- A; auto.
+Qed.
+
+Theorem shru'_shru':
+  forall x y z,
+  Int.ltu y iwordsize' = true ->
+  Int.ltu z iwordsize' = true ->
+  Int.ltu (Int.add y z) iwordsize' = true ->
+  shru' (shru' x y) z = shru' x (Int.add y z).
+Proof.
+  intros. apply Int.ltu_inv in H1.
+  destruct (int_ltu_2_inv y z) as (A & B & C & D & E & F); auto. omega.
+  set (y' := repr (Int.unsigned y)) in *.
+  set (z' := repr (Int.unsigned z)) in *.
+  replace (shru' x y) with (shru x y').
+  replace (shru' (shru x y') z) with (shru (shru x y') z').
+  replace (shru' x (Int.add y z)) with (shru x (add y' z')).
+  apply shru_shru; auto. apply zlt_true. rewrite <- E.
+  change (unsigned iwordsize) with zwordsize. tauto.
+  unfold shru, shru'. rewrite E; auto.
+  unfold shru at 1, shru'. rewrite <- B; auto.
+  unfold shru, shru'; rewrite <- A; auto.
+Qed.
+
+Theorem shr'_shr':
+  forall x y z,
+  Int.ltu y iwordsize' = true ->
+  Int.ltu z iwordsize' = true ->
+  Int.ltu (Int.add y z) iwordsize' = true ->
+  shr' (shr' x y) z = shr' x (Int.add y z).
+Proof.
+  intros. apply Int.ltu_inv in H1.
+  destruct (int_ltu_2_inv y z) as (A & B & C & D & E & F); auto. omega.
+  set (y' := repr (Int.unsigned y)) in *.
+  set (z' := repr (Int.unsigned z)) in *.
+  replace (shr' x y) with (shr x y').
+  replace (shr' (shr x y') z) with (shr (shr x y') z').
+  replace (shr' x (Int.add y z)) with (shr x (add y' z')).
+  apply shr_shr; auto. apply zlt_true. rewrite <- E.
+  change (unsigned iwordsize) with zwordsize. tauto.
+  unfold shr, shr'. rewrite E; auto.
+  unfold shr at 1, shr'. rewrite <- B; auto.
+  unfold shr, shr'; rewrite <- A; auto.
+Qed.
+
+(** Powers of two with exponents given as 32-bit ints *)
+
+Definition one_bits' (x: int) : list Int.int :=
+  List.map Int.repr (Z_one_bits wordsize (unsigned x) 0).
+
+Definition is_power2' (x: int) : option Int.int :=
+  match Z_one_bits wordsize (unsigned x) 0 with
+  | i :: nil => Some (Int.repr i)
+  | _ => None
+  end.
+
+Theorem one_bits'_range:
+  forall x i, In i (one_bits' x) -> Int.ltu i iwordsize' = true.
+Proof.
+  intros.
+  destruct (list_in_map_inv _ _ _ H) as [i0 [EQ IN]].
+  exploit Z_one_bits_range; eauto. fold zwordsize. intros R.
+  unfold Int.ltu. rewrite EQ. rewrite Int.unsigned_repr.
+  change (Int.unsigned iwordsize') with zwordsize. apply zlt_true. omega.
+  assert (zwordsize < Int.max_unsigned) by reflexivity. omega.
+Qed.
+
+Fixpoint int_of_one_bits' (l: list Int.int) : int :=
+  match l with
+  | nil => zero
+  | a :: b => add (shl' one a) (int_of_one_bits' b)
+  end.
+
+Theorem one_bits'_decomp:
+  forall x, x = int_of_one_bits' (one_bits' x).
+Proof.
+  assert (REC: forall l,
+           (forall i, In i l -> 0 <= i < zwordsize) ->
+           int_of_one_bits' (List.map Int.repr l) = repr (powerserie l)).
+  { induction l; simpl; intros.
+  - auto.
+  - rewrite IHl by eauto. apply eqm_samerepr; apply eqm_add.
+  + rewrite shl'_one_two_p. rewrite Int.unsigned_repr. apply eqm_sym; apply eqm_unsigned_repr.
+    exploit (H a). auto. assert (zwordsize < Int.max_unsigned) by reflexivity. omega.
+  + apply eqm_sym; apply eqm_unsigned_repr.
+  }
+  intros. rewrite <- (repr_unsigned x) at 1. unfold one_bits'. rewrite REC.
+  rewrite <- Z_one_bits_powerserie. auto. apply unsigned_range.
+  apply Z_one_bits_range.
+Qed.
+
+Lemma is_power2'_rng:
+  forall n logn,
+  is_power2' n = Some logn ->
+  0 <= Int.unsigned logn < zwordsize.
+Proof.
+  unfold is_power2'; intros n logn P2.
+  destruct (Z_one_bits wordsize (unsigned n) 0) as [ | i [ | ? ?]] eqn:B; inv P2.
+  assert (0 <= i < zwordsize).
+  { apply Z_one_bits_range with (unsigned n). rewrite B; auto with coqlib. }
+  rewrite Int.unsigned_repr. auto.
+  assert (zwordsize < Int.max_unsigned) by reflexivity.
+  omega.
+Qed.
+
+Theorem is_power2'_range:
+  forall n logn,
+  is_power2' n = Some logn -> Int.ltu logn iwordsize' = true.
+Proof.
+  intros. unfold Int.ltu. change (Int.unsigned iwordsize') with zwordsize.
+  apply zlt_true. generalize (is_power2'_rng _ _ H). tauto.
+Qed.
+
+Lemma is_power2'_correct:
+  forall n logn,
+  is_power2' n = Some logn ->
+  unsigned n = two_p (Int.unsigned logn).
+Proof.
+  unfold is_power2'; intros.
+  destruct (Z_one_bits wordsize (unsigned n) 0) as [ | i [ | ? ?]] eqn:B; inv H.
+  rewrite (Z_one_bits_powerserie wordsize (unsigned n)) by (apply unsigned_range).
+  rewrite Int.unsigned_repr. rewrite B; simpl. omega.
+  assert (0 <= i < zwordsize).
+  { apply Z_one_bits_range with (unsigned n). rewrite B; auto with coqlib. }
+  assert (zwordsize < Int.max_unsigned) by reflexivity.
+  omega.
+Qed.
+
+Theorem mul_pow2':
+  forall x n logn,
+  is_power2' n = Some logn ->
+  mul x n = shl' x logn.
+Proof.
+  intros. rewrite shl'_mul. f_equal. rewrite shl'_one_two_p.
+  rewrite <- (repr_unsigned n). f_equal. apply is_power2'_correct; auto.
+Qed.
+
+Theorem divu_pow2':
+  forall x n logn,
+  is_power2' n = Some logn ->
+  divu x n = shru' x logn.
+Proof.
+  intros. generalize (is_power2'_correct n logn H). intro.
+  symmetry. unfold divu. rewrite H0. unfold shru'. rewrite Zshiftr_div_two_p. auto.
+  eapply is_power2'_rng; eauto.
 Qed.
 
 (** Decomposing 64-bit ints as pairs of 32-bit ints *)
@@ -4320,7 +4005,7 @@ Proof.
   set (p := Int.unsigned x * Int.unsigned y).
   set (ph := p / Int.modulus). set (pl := p mod Int.modulus).
   transitivity (repr (ph * Int.modulus + pl)).
-- f_equal. rewrite Zmult_comm. apply Z_div_mod_eq. apply Int.modulus_pos.
+- f_equal. rewrite Z.mul_comm. apply Z_div_mod_eq. apply Int.modulus_pos.
 - apply eqm_samerepr. apply eqm_add. apply eqm_mul_2p32. auto with ints.
   rewrite Int.unsigned_repr_eq. apply eqm_refl.
 Qed.
@@ -4353,7 +4038,7 @@ Proof.
   apply eqm_samerepr. apply eqm_add. 2: apply eqm_refl.
   unfold mul'. apply eqm_unsigned_repr_l. apply eqm_refl.
   transitivity (repr (0 + (XL * YL + (XL * YH + XH * YL) * two_p 32))).
-  rewrite Zplus_0_l; auto.
+  rewrite Z.add_0_l; auto.
   transitivity (repr (XH * YH * (two_p 32 * two_p 32) + (XL * YL + (XL * YH + XH * YL) * two_p 32))).
   apply eqm_samerepr. apply eqm_add. 2: apply eqm_refl.
   change (two_p 32 * two_p 32) with modulus. exists (- XH * YH). ring.
@@ -4430,6 +4115,43 @@ Proof.
   rewrite zlt_true by omega; auto.
 Qed.
 
+(** Utility proofs for mixed 32bit and 64bit arithmetic *)
+
+Remark int_unsigned_range:
+  forall x, 0 <= Int.unsigned x <= max_unsigned.
+Proof.
+  intros.
+  unfold max_unsigned. unfold modulus.
+  generalize (Int.unsigned_range x).
+  unfold Int.modulus in *.
+  change (wordsize) with  64%nat in *.
+  change (Int.wordsize) with 32%nat in *.
+  unfold two_power_nat. simpl.
+  omega.
+Qed.
+
+Remark int_unsigned_repr:
+  forall x, unsigned (repr (Int.unsigned x)) = Int.unsigned x.
+Proof.
+  intros. rewrite unsigned_repr. auto.
+  apply int_unsigned_range.
+Qed.
+
+Lemma int_sub_ltu:
+  forall x y,
+    Int.ltu x y= true ->
+    Int.unsigned (Int.sub y x) = unsigned (sub (repr (Int.unsigned y)) (repr (Int.unsigned x))).
+Proof.
+  intros. generalize (Int.sub_ltu x y H). intros. unfold Int.sub. unfold sub.
+  rewrite Int.unsigned_repr. rewrite unsigned_repr.
+  rewrite unsigned_repr by apply int_unsigned_range. rewrite int_unsigned_repr. reflexivity.
+  rewrite unsigned_repr by apply int_unsigned_range.
+  rewrite int_unsigned_repr. generalize (int_unsigned_range y).
+  omega.
+  generalize (Int.sub_ltu x y H). intros.
+  generalize (Int.unsigned_range_2 y). intros. omega.
+Qed.
+
 End Int64.
 
 Strategy 0 [Wordsize_64.wordsize].
@@ -4437,3 +4159,298 @@ Strategy 0 [Wordsize_64.wordsize].
 Notation int64 := Int64.int.
 
 Global Opaque Int.repr Int64.repr Byte.repr.
+
+(** * Specialization to offsets in pointer values *)
+
+Module Wordsize_Ptrofs.
+  Definition wordsize := if Archi.ptr64 then 64%nat else 32%nat.
+  Remark wordsize_not_zero: wordsize <> 0%nat.
+  Proof. unfold wordsize; destruct Archi.ptr64; congruence. Qed.
+End Wordsize_Ptrofs.
+
+Strategy opaque [Wordsize_Ptrofs.wordsize].
+
+Module Ptrofs.
+
+Include Make(Wordsize_Ptrofs).
+
+Definition to_int (x: int): Int.int := Int.repr (unsigned x).
+
+Definition to_int64 (x: int): Int64.int := Int64.repr (unsigned x).
+
+Definition of_int (x: Int.int) : int := repr (Int.unsigned x).
+
+Definition of_intu := of_int.
+
+Definition of_ints (x: Int.int) : int := repr (Int.signed x).
+
+Definition of_int64 (x: Int64.int) : int := repr (Int64.unsigned x).
+
+Definition of_int64u := of_int64.
+
+Definition of_int64s (x: Int64.int) : int := repr (Int64.signed x).
+
+Section AGREE32.
+
+Hypothesis _32: Archi.ptr64 = false.
+
+Lemma modulus_eq32: modulus = Int.modulus.
+Proof.
+  unfold modulus, wordsize.
+  change Wordsize_Ptrofs.wordsize with (if Archi.ptr64 then 64%nat else 32%nat).
+  rewrite _32. reflexivity.
+Qed.
+
+Lemma eqm32:
+  forall x y, Int.eqm x y <-> eqm x y.
+Proof.
+  intros. unfold Int.eqm, eqm. rewrite modulus_eq32; tauto.
+Qed.
+
+Definition agree32 (a: Ptrofs.int) (b: Int.int) : Prop :=
+  Ptrofs.unsigned a = Int.unsigned b.
+
+Lemma agree32_repr:
+  forall i, agree32 (Ptrofs.repr i) (Int.repr i).
+Proof.
+  intros; red. rewrite Ptrofs.unsigned_repr_eq, Int.unsigned_repr_eq.
+  apply f_equal2. auto. apply modulus_eq32.
+Qed.
+
+Lemma agree32_signed:
+  forall a b, agree32 a b -> Ptrofs.signed a = Int.signed b.
+Proof.
+  unfold agree32; intros. unfold signed, Int.signed, half_modulus, Int.half_modulus.
+  rewrite modulus_eq32. rewrite H. auto.
+Qed.
+
+Lemma agree32_of_int:
+  forall b, agree32 (of_int b) b.
+Proof.
+  unfold of_int; intros. rewrite <- (Int.repr_unsigned b) at 2. apply agree32_repr.
+Qed.
+
+Lemma agree32_of_ints:
+  forall b, agree32 (of_ints b) b.
+Proof.
+  unfold of_int; intros. rewrite <- (Int.repr_signed b) at 2. apply agree32_repr.
+Qed.
+
+Lemma agree32_of_int_eq:
+  forall a b, agree32 a b -> of_int b = a.
+Proof.
+  unfold agree32, of_int; intros. rewrite <- H. apply repr_unsigned.
+Qed.
+
+Lemma agree32_of_ints_eq:
+  forall a b, agree32 a b -> of_ints b = a.
+Proof.
+  unfold of_ints; intros. erewrite <- agree32_signed by eauto. apply repr_signed.
+Qed.
+
+Lemma agree32_to_int:
+  forall a, agree32 a (to_int a).
+Proof.
+  unfold agree32, to_int; intros. rewrite <- (agree32_repr (unsigned a)).
+  rewrite repr_unsigned; auto.
+Qed.
+
+Lemma agree32_to_int_eq:
+  forall a b, agree32 a b -> to_int a = b.
+Proof.
+  unfold agree32, to_int; intros. rewrite H. apply Int.repr_unsigned.
+Qed.
+
+Lemma agree32_neg:
+  forall a1 b1, agree32 a1 b1 -> agree32 (Ptrofs.neg a1) (Int.neg b1).
+Proof.
+  unfold agree32, Ptrofs.neg, Int.neg; intros. rewrite H. apply agree32_repr.
+Qed.
+
+Lemma agree32_add:
+  forall a1 b1 a2 b2,
+  agree32 a1 b1 -> agree32 a2 b2 -> agree32 (Ptrofs.add a1 a2) (Int.add b1 b2).
+Proof.
+  unfold agree32, Ptrofs.add, Int.add; intros. rewrite H, H0. apply agree32_repr.
+Qed.
+
+Lemma agree32_sub:
+  forall a1 b1 a2 b2,
+  agree32 a1 b1 -> agree32 a2 b2 -> agree32 (Ptrofs.sub a1 a2) (Int.sub b1 b2).
+Proof.
+  unfold agree32, Ptrofs.sub, Int.sub; intros. rewrite H, H0. apply agree32_repr.
+Qed.
+
+Lemma agree32_mul:
+  forall a1 b1 a2 b2,
+  agree32 a1 b1 -> agree32 a2 b2 -> agree32 (Ptrofs.mul a1 a2) (Int.mul b1 b2).
+Proof.
+  unfold agree32, Ptrofs.mul, Int.mul; intros. rewrite H, H0. apply agree32_repr.
+Qed.
+
+Lemma agree32_divs:
+  forall a1 b1 a2 b2,
+  agree32 a1 b1 -> agree32 a2 b2 -> agree32 (Ptrofs.divs a1 a2) (Int.divs b1 b2).
+Proof.
+  intros; unfold agree32, Ptrofs.divs, Int.divs.
+  erewrite ! agree32_signed by eauto. apply agree32_repr.
+Qed.
+
+Lemma of_int_to_int:
+  forall n, of_int (to_int n) = n.
+Proof.
+  intros; unfold of_int, to_int. apply eqm_repr_eq. rewrite <- eqm32.
+  apply Int.eqm_sym; apply Int.eqm_unsigned_repr.
+Qed.
+
+Lemma to_int_of_int:
+  forall n, to_int (of_int n) = n.
+Proof.
+  intros; unfold of_int, to_int. rewrite unsigned_repr. apply Int.repr_unsigned.
+  unfold max_unsigned. rewrite modulus_eq32. destruct (Int.unsigned_range n); omega.
+Qed.
+
+End AGREE32.
+
+Section AGREE64.
+
+Hypothesis _64: Archi.ptr64 = true.
+
+Lemma modulus_eq64: modulus = Int64.modulus.
+Proof.
+  unfold modulus, wordsize.
+  change Wordsize_Ptrofs.wordsize with (if Archi.ptr64 then 64%nat else 32%nat).
+  rewrite _64. reflexivity.
+Qed.
+
+Lemma eqm64:
+  forall x y, Int64.eqm x y <-> eqm x y.
+Proof.
+  intros. unfold Int64.eqm, eqm. rewrite modulus_eq64; tauto.
+Qed.
+
+Definition agree64 (a: Ptrofs.int) (b: Int64.int) : Prop :=
+  Ptrofs.unsigned a = Int64.unsigned b.
+
+Lemma agree64_repr:
+  forall i, agree64 (Ptrofs.repr i) (Int64.repr i).
+Proof.
+  intros; red. rewrite Ptrofs.unsigned_repr_eq, Int64.unsigned_repr_eq.
+  apply f_equal2. auto. apply modulus_eq64.
+Qed.
+
+Lemma agree64_signed:
+  forall a b, agree64 a b -> Ptrofs.signed a = Int64.signed b.
+Proof.
+  unfold agree64; intros. unfold signed, Int64.signed, half_modulus, Int64.half_modulus.
+  rewrite modulus_eq64. rewrite H. auto.
+Qed.
+
+Lemma agree64_of_int:
+  forall b, agree64 (of_int64 b) b.
+Proof.
+  unfold of_int64; intros. rewrite <- (Int64.repr_unsigned b) at 2. apply agree64_repr.
+Qed.
+
+Lemma agree64_of_int_eq:
+  forall a b, agree64 a b -> of_int64 b = a.
+Proof.
+  unfold agree64, of_int64; intros. rewrite <- H. apply repr_unsigned.
+Qed.
+
+Lemma agree64_to_int:
+  forall a, agree64 a (to_int64 a).
+Proof.
+  unfold agree64, to_int64; intros. rewrite <- (agree64_repr (unsigned a)).
+  rewrite repr_unsigned; auto.
+Qed.
+
+Lemma agree64_to_int_eq:
+  forall a b, agree64 a b -> to_int64 a = b.
+Proof.
+  unfold agree64, to_int64; intros. rewrite H. apply Int64.repr_unsigned.
+Qed.
+
+Lemma agree64_neg:
+  forall a1 b1, agree64 a1 b1 -> agree64 (Ptrofs.neg a1) (Int64.neg b1).
+Proof.
+  unfold agree64, Ptrofs.neg, Int64.neg; intros. rewrite H. apply agree64_repr.
+Qed.
+
+Lemma agree64_add:
+  forall a1 b1 a2 b2,
+  agree64 a1 b1 -> agree64 a2 b2 -> agree64 (Ptrofs.add a1 a2) (Int64.add b1 b2).
+Proof.
+  unfold agree64, Ptrofs.add, Int.add; intros. rewrite H, H0. apply agree64_repr.
+Qed.
+
+Lemma agree64_sub:
+  forall a1 b1 a2 b2,
+  agree64 a1 b1 -> agree64 a2 b2 -> agree64 (Ptrofs.sub a1 a2) (Int64.sub b1 b2).
+Proof.
+  unfold agree64, Ptrofs.sub, Int.sub; intros. rewrite H, H0. apply agree64_repr.
+Qed.
+
+Lemma agree64_mul:
+  forall a1 b1 a2 b2,
+  agree64 a1 b1 -> agree64 a2 b2 -> agree64 (Ptrofs.mul a1 a2) (Int64.mul b1 b2).
+Proof.
+  unfold agree64, Ptrofs.mul, Int.mul; intros. rewrite H, H0. apply agree64_repr.
+Qed.
+
+Lemma agree64_divs:
+  forall a1 b1 a2 b2,
+  agree64 a1 b1 -> agree64 a2 b2 -> agree64 (Ptrofs.divs a1 a2) (Int64.divs b1 b2).
+Proof.
+  intros; unfold agree64, Ptrofs.divs, Int64.divs.
+  erewrite ! agree64_signed by eauto. apply agree64_repr.
+Qed.
+
+Lemma of_int64_to_int64:
+  forall n, of_int64 (to_int64 n) = n.
+Proof.
+  intros; unfold of_int64, to_int64. apply eqm_repr_eq. rewrite <- eqm64.
+  apply Int64.eqm_sym; apply Int64.eqm_unsigned_repr.
+Qed.
+
+Lemma to_int64_of_int64:
+  forall n, to_int64 (of_int64 n) = n.
+Proof.
+  intros; unfold of_int64, to_int64. rewrite unsigned_repr. apply Int64.repr_unsigned.
+  unfold max_unsigned. rewrite  modulus_eq64. destruct (Int64.unsigned_range n); omega.
+Qed.
+
+End AGREE64.
+
+Hint Resolve
+  agree32_repr agree32_of_int agree32_of_ints agree32_of_int_eq agree32_of_ints_eq
+  agree32_to_int agree32_to_int_eq agree32_neg agree32_add agree32_sub agree32_mul agree32_divs
+  agree64_repr agree64_of_int agree64_of_int_eq
+  agree64_to_int agree64_to_int_eq agree64_neg agree64_add agree64_sub agree64_mul agree64_divs : ptrofs.
+
+End Ptrofs.
+
+Strategy 0 [Wordsize_Ptrofs.wordsize].
+
+Notation ptrofs := Ptrofs.int.
+
+Global Opaque Ptrofs.repr.
+
+Hint Resolve Int.modulus_pos Int.eqm_refl Int.eqm_refl2 Int.eqm_sym Int.eqm_trans
+  Int.eqm_small_eq Int.eqm_add Int.eqm_neg Int.eqm_sub Int.eqm_mult
+  Int.eqm_unsigned_repr Int.eqm_unsigned_repr_l Int.eqm_unsigned_repr_r
+  Int.unsigned_range Int.unsigned_range_2
+  Int.repr_unsigned Int.repr_signed Int.unsigned_repr : ints.
+
+Hint Resolve Int64.modulus_pos Int64.eqm_refl Int64.eqm_refl2 Int64.eqm_sym Int64.eqm_trans
+  Int64.eqm_small_eq Int64.eqm_add Int64.eqm_neg Int64.eqm_sub Int64.eqm_mult
+  Int64.eqm_unsigned_repr Int64.eqm_unsigned_repr_l Int64.eqm_unsigned_repr_r
+  Int64.unsigned_range Int64.unsigned_range_2
+  Int64.repr_unsigned Int64.repr_signed Int64.unsigned_repr : ints.
+
+Hint Resolve Ptrofs.modulus_pos Ptrofs.eqm_refl Ptrofs.eqm_refl2 Ptrofs.eqm_sym Ptrofs.eqm_trans
+  Ptrofs.eqm_small_eq Ptrofs.eqm_add Ptrofs.eqm_neg Ptrofs.eqm_sub Ptrofs.eqm_mult
+  Ptrofs.eqm_unsigned_repr Ptrofs.eqm_unsigned_repr_l Ptrofs.eqm_unsigned_repr_r
+  Ptrofs.unsigned_range Ptrofs.unsigned_range_2
+  Ptrofs.repr_unsigned Ptrofs.repr_signed Ptrofs.unsigned_repr : ints.
+
